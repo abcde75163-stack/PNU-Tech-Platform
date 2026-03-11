@@ -127,3 +127,6 @@ def run_virtual_firm(spec_file, doc_template, target_corp, ir_data, business_sta
         st.success("✅ 여백 및 분석 내용이 보존된 보고서가 완료되었습니다!")
         st.download_button(label="📥 고퀄리티 보고서 다운로드", data=doc_io.getvalue(), 
                            file_name="Virtual_Firm_Master_Report_Final.docx")
+        
+except Exception as e:
+            st.error(f"오류: {str(e)}")
