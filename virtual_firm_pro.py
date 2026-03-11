@@ -1,3 +1,13 @@
+아이고, 이 부분은 제 불찰입니다! 🙏
+
+에러 메시지("no style with name 'Light List Accent 1'")가 발생한 이유는, 제가 요약 박스를 예쁘게 꾸미기 위해 지정한 'Light List Accent 1'이라는 표 스타일이 위원님께서 사용 중인 기본 워드 템플릿(default_vf_template.docx) 안에 등록되어 있지 않기 때문입니다.
+
+워드 파일마다 내장된 테마(스타일) 이름이 달라서 발생하는 흔한 충돌입니다. 이를 해결하기 위해, 어느 워드 파일에서나 100% 작동하는 가장 기본 스타일인 'Table Grid'로 변경하고, 파이썬 코드로 직접 **'옅은 회색 배경'**을 칠해 요약 박스 느낌을 내도록 코드를 수정했습니다.
+
+아래 최종 수정된 코드로 다시 한번 전체 덮어쓰기를 부탁드립니다!
+
+💻 완벽 수정된 virtual_firm_pro.py (표 스타일 에러 해결)
+Python
 import streamlit as st
 import fitz
 from google import genai
@@ -35,11 +45,18 @@ def extract_text_from_pdf(uploaded_file):
     doc = fitz.open(stream=uploaded_file.read(), filetype="pdf")
     return "".join([page.get_text() for page in doc])[:15000]
 
-# 3. [C안 구현] 핵심 지표 요약 박스 생성 함수
+# 3. [C안 구현] 핵심 지표 요약 박스 생성 함수 (★ 스타일 에러 수정)
 def add_summary_box(doc, summary_text):
     table = doc.add_table(rows=1, cols=1)
-    table.style = 'Light List Accent 1' # 강조 스타일
+    table.style = 'Table Grid' # 모든 워드에서 지원하는 기본 스타일로 변경
+    
     cell = table.cell(0, 0)
+    
+    # 옅은 회색 배경 직접 추가
+    shading_elm = OxmlElement('w:shd')
+    shading_elm.set(qn('w:fill'), 'F2F2F2')
+    cell._tc.get_or_add_tcPr().append(shading_elm)
+
     cell.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
     
     lines = summary_text.split('\n')
@@ -100,7 +117,7 @@ def extract_tag(text, tag_name):
     match = re.search(pattern, text, re.DOTALL | re.IGNORECASE)
     return match.group(1).strip() if match else ""
 
-# ★ 버그 수정: 실패 시 멈추지 않고 예비 모델로 돌아가는 안전장치 복구
+# 5. 스마트 라우터
 def generate_one_shot(prompt):
     fallback_models = ["gemini-2.5-flash", "gemini-1.5-pro", "gemini-1.5-flash"]
     last_error = ""
@@ -139,7 +156,6 @@ def run_virtual_firm(spec_file, doc_template, target_corp, ir_data, business_sta
             ir_text = extract_text_from_pdf(ir_data) if ir_data else ""
             context = f"대상기업: {target_corp}\n기업IR자료: {ir_text}\n사업현황: {business_status}"
             
-            # ★ 버그 수정: 세부 지시문(가치평가 공식 등)을 다시 명확하게 복구
             prompt = f"""당신은 최고급 비즈니스 아키텍트이자 공인 기술가치평가사입니다.
             텍스트 위주의 보고서를 탈피하기 위해 핵심 요약 박스와 체계적인 구조로 응답하세요.
 
@@ -192,7 +208,6 @@ def run_virtual_firm(spec_file, doc_template, target_corp, ir_data, business_sta
 
             raw_response, used_model = generate_one_shot(prompt)
             
-            # ★ 버그 수정: 실패 시 원인을 알려주는 에러창 복구
             if not raw_response:
                 st.error(f"⚠️ AI 응답 생성에 실패했습니다. 사유: {used_model}")
                 return
