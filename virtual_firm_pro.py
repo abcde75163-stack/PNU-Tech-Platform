@@ -37,13 +37,11 @@ def extract_text_from_pdf(uploaded_file):
 
 # 3. [C안 구현] 핵심 지표 요약 박스 생성 함수
 def add_summary_box(doc, summary_text):
-    # 단일 셀 표를 만들어 박스 효과 구현
     table = doc.add_table(rows=1, cols=1)
-    table.style = 'Light List Accent 1' # 강조 스타일 적용
+    table.style = 'Light List Accent 1' # 강조 스타일
     cell = table.cell(0, 0)
     cell.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
     
-    # 박스 내부 텍스트 스타일링
     lines = summary_text.split('\n')
     for line in lines:
         if not line.strip(): continue
@@ -52,30 +50,13 @@ def add_summary_box(doc, summary_text):
         run = p.add_run(line.strip())
         set_font(run, "KoPub돋움체_Pro Medium", 11, bold=True)
     
-    doc.add_paragraph() # 박스 뒤 간격 추가
-
-# 4. [B안 구현] 텍스트를 표로 변환하는 함수 (SWOT, 3C용)
-def add_styled_table_from_text(doc, section_title, items_text):
-    doc.add_paragraph().add_run(f"■ {section_title} 상세 분석").bold = True
-    
-    # 데이터를 리스트화
-    items = [item.strip() for item in items_text.split('\n') if item.strip()]
-    
-    table = doc.add_table(rows=len(items), cols=1)
-    table.style = 'Table Grid'
-    
-    for i, item in enumerate(items):
-        cell = table.cell(i, 0)
-        p = cell.paragraphs[0]
-        run = p.add_run(item)
-        set_font(run, "KoPub돋움체_Pro Light", 10)
-    
     doc.add_paragraph()
 
-# 5. 콘텐츠 삽입 및 스타일링
-def add_styled_content_at(target_p, text):
+# 4. 콘텐츠 삽입 및 스타일링
+def add_styled_content_at(target_p, text, doc=None):
     lines = str(text).split('\n')
     current_p = target_p
+    
     for line in lines:
         line_stripped = line.strip()
         if not line_stripped: continue
@@ -86,7 +67,10 @@ def add_styled_content_at(target_p, text):
         
         if line_stripped.startswith('## '):
             run = new_p.add_run(line_stripped.replace('## ', ''))
-            set_font(run, "KoPub돋움체_Pro Medium", 12, bold=True, color=(0, 51, 153)) # 파란색 제목
+            set_font(run, "KoPub돋움체_Pro Medium", 13, bold=True, color=(0, 51, 153))
+        elif line_stripped.startswith('### '):
+            run = new_p.add_run(line_stripped.replace('### ', ''))
+            set_font(run, "KoPub돋움체_Pro Medium", 12, bold=True)
         else:
             new_p.paragraph_format.line_spacing = 1.6
             parts = re.split(r'(\*\*.*?\*\*)', line_stripped)
@@ -107,7 +91,7 @@ def replace_placeholder(doc, placeholder, content, is_inline=False):
                 p.text = p.text.replace(placeholder, content)
             else:
                 p.text = p.text.replace(placeholder, "") 
-                if content: add_styled_content_at(p, content)    
+                if content: add_styled_content_at(p, content, doc)    
             return True
     return False
 
@@ -116,16 +100,30 @@ def extract_tag(text, tag_name):
     match = re.search(pattern, text, re.DOTALL | re.IGNORECASE)
     return match.group(1).strip() if match else ""
 
+# ★ 버그 수정: 실패 시 멈추지 않고 예비 모델로 돌아가는 안전장치 복구
 def generate_one_shot(prompt):
-    try:
-        response = client.models.generate_content(
-            model="gemini-2.0-flash", # 고성능 모델 지정
-            contents=prompt,
-            config={"temperature": 0.2} 
-        )
-        return response.text.strip(), "gemini-2.0-flash"
-    except Exception as e:
-        return None, str(e)
+    fallback_models = ["gemini-2.5-flash", "gemini-1.5-pro", "gemini-1.5-flash"]
+    last_error = ""
+    for model_name in fallback_models:
+        for attempt in range(2):
+            try:
+                response = client.models.generate_content(
+                    model=model_name,
+                    contents=prompt,
+                    config={"temperature": 0.2} 
+                )
+                if response and response.text:
+                    return response.text.strip(), model_name
+            except Exception as e:
+                error_msg = str(e)
+                last_error = error_msg
+                if "429" in error_msg or "RESOURCE_EXHAUSTED" in error_msg:
+                    time.sleep(3) 
+                    continue
+                else:
+                    time.sleep(1)
+                    continue
+    return None, f"생성 실패 (에러: {last_error[:100]})"
 
 # ★ 메인 실행 함수
 def run_virtual_firm(spec_file, doc_template, target_corp, ir_data, business_status):
@@ -135,37 +133,71 @@ def run_virtual_firm(spec_file, doc_template, target_corp, ir_data, business_sta
 
     st.subheader(f"🏢 {target_corp if target_corp else 'Virtual Firm'} 프리미엄 전략 보고서 생성 중...")
     
-    with st.spinner("📊 핵심 지표 요약 박스 및 비즈니스 표를 구성하고 있습니다..."):
+    with st.spinner("📊 핵심 지표 요약 박스 및 비즈니스 표를 구성하고 있습니다... (약 20~30초 소요)"):
         try:
             tech_text = extract_text_from_pdf(spec_file)
             ir_text = extract_text_from_pdf(ir_data) if ir_data else ""
             context = f"대상기업: {target_corp}\n기업IR자료: {ir_text}\n사업현황: {business_status}"
             
-            prompt = f"""당신은 최고급 비즈니스 아키텍트입니다. 텍스트 위주의 보고서를 탈피하기 위해 요약 박스와 분석 데이터를 구조화하여 응답하세요.
+            # ★ 버그 수정: 세부 지시문(가치평가 공식 등)을 다시 명확하게 복구
+            prompt = f"""당신은 최고급 비즈니스 아키텍트이자 공인 기술가치평가사입니다.
+            텍스트 위주의 보고서를 탈피하기 위해 핵심 요약 박스와 체계적인 구조로 응답하세요.
 
-            <tech_title>핵심 비즈니스 명칭</tech_title>
+            [작성 규칙]
+            1. 마크다운 표(| | |)는 에러를 유발하므로 절대 사용하지 말고, 소제목(##)과 개조식(-)으로 깔끔하게 구조화하세요.
+            2. 응답은 반드시 5개의 <태그>를 모두 열고 닫아야 합니다.
+
+            <tech_title>핵심 비즈니스 명칭 (20자 내외)</tech_title>
 
             <summary_box>
-            보고서 최상단에 배치될 핵심 요약입니다. (반드시 아래 수치를 포함)
-            1. 최종 기술가치평가액: [금액]
-            2. 2028년 예상 SOM(시장규모): [금액]
+            보고서 최상단에 배치될 핵심 요약입니다. (반드시 아래 3가지를 포함하여 짧고 강렬하게 작성)
+            1. 예상 기술가치평가액: [금액]
+            2. 타겟 시장 규모(TAM/SOM): [금액]
             3. 핵심 경쟁력 지표: [예: 효율 40% 향상 등]
             </summary_box>
             
-            <section_1>Ⅰ. 기술 개요 (상세)</section_1>
-            <section_2>Ⅱ. 문제점 및 해결 방안 (상세)</section_2>
-            <section_3>Ⅲ. Scale-up 및 기술가치평가 (수식과 근거 포함 상세 기술)</section_3>
+            <section_1>
+            Ⅰ. 기술 개요
+            - 기술의 작동 원리와 압도적 경쟁력
+            - 비즈니스적 해자(Moat)
+            </section_1>
+            
+            <section_2>
+            Ⅱ. 문제점 및 해결 방안
+            - 타겟 시장의 치명적인 한계점
+            - 본 기술의 혁신적 해결책
+            </section_2>
+            
+            <section_3>
+            Ⅲ. Scale-up 및 기술가치평가
+            ## 1. 사업화 로드맵
+            - 단계별 타임라인
+            ## 2. 시장 규모 및 예상 매출액
+            - 추정치 및 산출 근거
+            ## 3. 기술가치평가 산출 (수식 상세 전개)
+            - 수익접근법 등 평가 방법론 명시
+            - 산출 과정: 예상매출액 × 로열티율 × 기술기여도 등 실제 계산식을 직접 풀어서 상세히 서술
+            </section_3>
             
             <section_4>
             Ⅳ. Virtual Firm 활용 (최종 제안)
-            반드시 3C, SWOT, Lean Canvas 내용을 포함하되, 각 분석의 핵심 포인트는 표로 정리될 수 있게 개조식으로 작성하세요.
+            ## 1. 3C 분석 (자사/경쟁사/고객)
+            ## 2. SWOT 분석 (강점/약점/기회/위협)
+            ## 3. Lean Canvas (9대 핵심 요소)
+            ## 4. 최종 창업 및 이전 전략 제안
             </section_4>
 
             데이터: {tech_text}
             {context}"""
 
             raw_response, used_model = generate_one_shot(prompt)
-            if not raw_response: return
+            
+            # ★ 버그 수정: 실패 시 원인을 알려주는 에러창 복구
+            if not raw_response:
+                st.error(f"⚠️ AI 응답 생성에 실패했습니다. 사유: {used_model}")
+                return
+
+            st.toast(f"✅ 프리미엄 보고서 생성 완료! (사용 모델: {used_model})")
 
             ai_data = {
                 "tech_title": extract_tag(raw_response, "tech_title"),
@@ -176,7 +208,6 @@ def run_virtual_firm(spec_file, doc_template, target_corp, ir_data, business_sta
                 "section_4": extract_tag(raw_response, "section_4"),
             }
 
-            # 문서 생성 및 시각화 적용
             doc = Document(DEFAULT_WORD_TEMPLATE) if os.path.exists(DEFAULT_WORD_TEMPLATE) else Document()
             
             # [C안] 요약 박스 삽입
@@ -192,7 +223,12 @@ def run_virtual_firm(spec_file, doc_template, target_corp, ir_data, business_sta
 
             doc_io = io.BytesIO()
             doc.save(doc_io)
-            st.download_button("📥 고도화된 보고서 다운로드", doc_io.getvalue(), "Virtual_Firm_Premium_Report.docx")
+            st.download_button(
+                label="📥 프리미엄 전략 보고서 다운로드", 
+                data=doc_io.getvalue(), 
+                file_name="Virtual_Firm_Premium_Report.docx",
+                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            )
 
         except Exception as e:
-            st.error(f"오류 발생: {e}")
+            st.error(f"문서 생성 중 오류 발생: {e}")
