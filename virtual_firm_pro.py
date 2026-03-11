@@ -48,14 +48,14 @@ def add_styled_content_at(target_p, text, doc=None):
         current_p._p.addnext(new_p_xml)
         new_p = Paragraph(new_p_xml, current_p._parent)
         
-        # 💡 [핵심] 특수기호를 활용한 요약 박스 상/하단 선 디자인
+        # 요약 박스 디자인 및 소제목 스타일링
         if "━━━━━━━━━━━━━━━━━━" in line_stripped:
             run = new_p.add_run(line_stripped)
-            set_font(run, "KoPub돋움체_Pro Bold", 11, bold=True, color=(180, 180, 180)) # 연한 회색 선
+            set_font(run, "KoPub돋움체_Pro Bold", 11, bold=True, color=(180, 180, 180)) 
             new_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
         elif line_stripped.startswith('## 📊'):
             run = new_p.add_run(line_stripped.replace('## ', ''))
-            set_font(run, "KoPub돋움체_Pro Bold", 13, bold=True, color=(0, 51, 153)) # 파란색 포인트
+            set_font(run, "KoPub돋움체_Pro Bold", 13, bold=True, color=(0, 51, 153)) 
             new_p.paragraph_format.space_before = Pt(12)
         elif line_stripped.startswith('## '):
             run = new_p.add_run(line_stripped.replace('## ', ''))
@@ -77,7 +77,9 @@ def add_styled_content_at(target_p, text, doc=None):
         current_p = new_p
     return current_p
 
+# ★ 버그 수정: 표(Table) 내부의 태그까지 완벽하게 스캔하도록 복구
 def replace_placeholder(doc, placeholder, content, is_inline=False):
+    # 1. 일반 단락 검사
     for p in doc.paragraphs:
         if placeholder in p.text:
             if is_inline:
@@ -86,6 +88,19 @@ def replace_placeholder(doc, placeholder, content, is_inline=False):
                 p.text = p.text.replace(placeholder, "") 
                 if content: add_styled_content_at(p, content, doc)    
             return True
+            
+    # 2. 표 내부 단락 검사 (이 부분이 복구되었습니다!)
+    for table in doc.tables:
+        for row in table.rows:
+            for cell in row.cells:
+                for p in cell.paragraphs:
+                    if placeholder in p.text:
+                        if is_inline:
+                            p.text = p.text.replace(placeholder, content)
+                        else:
+                            p.text = p.text.replace(placeholder, "")
+                            if content: add_styled_content_at(p, content, doc)
+                        return True
     return False
 
 def extract_tag(text, tag_name):
@@ -195,7 +210,7 @@ def run_virtual_firm(spec_file, doc_template, target_corp, ir_data, business_sta
                 "section_4": extract_tag(raw_response, "section_4"),
             }
 
-            # 💡 [디자인 핵심] 표(Table) 함수를 없애고 선(Line)을 이용해 텍스트 기반 요약 박스 디자인 생성
+            # 텍스트 기반 요약 박스 디자인 생성
             styled_summary = ""
             if ai_data["summary"]:
                 styled_summary = "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
@@ -203,11 +218,12 @@ def run_virtual_firm(spec_file, doc_template, target_corp, ir_data, business_sta
                 styled_summary += ai_data["summary"].strip() + "\n\n"
                 styled_summary += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
 
-            # Ⅰ장 기술개요(section_1) 텍스트 맨 앞에 요약 박스를 강제로 이어 붙임
+            # Ⅰ장 기술개요 텍스트 맨 앞에 요약 박스 결합
             combined_section_1 = styled_summary + ai_data["section_1"]
 
             doc = Document(DEFAULT_WORD_TEMPLATE) if os.path.exists(DEFAULT_WORD_TEMPLATE) else Document()
             
+            # 각 섹션 치환 (표 내부까지 정상 작동)
             replace_placeholder(doc, "{{tech_title}}", ai_data["tech_title"], is_inline=True)
             replace_placeholder(doc, "{{section_1}}", combined_section_1)
             replace_placeholder(doc, "{{section_2}}", ai_data["section_2"])
@@ -217,9 +233,9 @@ def run_virtual_firm(spec_file, doc_template, target_corp, ir_data, business_sta
             doc_io = io.BytesIO()
             doc.save(doc_io)
             st.download_button(
-                label="📥 최종 완성형 전략 보고서 다운로드", 
+                label="📥 템플릿 완벽 적용 전략 보고서 다운로드", 
                 data=doc_io.getvalue(), 
-                file_name="Virtual_Firm_Premium_Report.docx",
+                file_name="Virtual_Firm_Premium_Report_Final.docx",
                 mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
             )
 
