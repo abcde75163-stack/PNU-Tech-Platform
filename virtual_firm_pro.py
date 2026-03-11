@@ -19,7 +19,6 @@ client = genai.Client(api_key=MY_API_KEY)
 # 고정 템플릿 파일명 설정
 DEFAULT_WORD_TEMPLATE = "default_vf_template.docx"
 
-# 1. 폰트 및 스타일 설정
 def set_font(run, font_name, size, bold=False, color=None):
     run.font.name = font_name
     run._element.rPr.rFonts.set(qn('w:eastAsia'), font_name)
@@ -28,14 +27,12 @@ def set_font(run, font_name, size, bold=False, color=None):
     if color:
         run.font.color.rgb = RGBColor(*color)
 
-# 2. PDF 텍스트 추출
 def extract_text_from_pdf(uploaded_file):
     if uploaded_file is None: return ""
     uploaded_file.seek(0)
     doc = fitz.open(stream=uploaded_file.read(), filetype="pdf")
     return "".join([page.get_text() for page in doc])[:15000]
 
-# 3. 콘텐츠 삽입 및 스타일링 (텍스트 박스 디자인 포함)
 def add_styled_content_at(target_p, text, doc=None):
     lines = str(text).split('\n')
     current_p = target_p
@@ -48,16 +45,7 @@ def add_styled_content_at(target_p, text, doc=None):
         current_p._p.addnext(new_p_xml)
         new_p = Paragraph(new_p_xml, current_p._parent)
         
-        # 요약 박스 디자인 및 소제목 스타일링
-        if "━━━━━━━━━━━━━━━━━━" in line_stripped:
-            run = new_p.add_run(line_stripped)
-            set_font(run, "KoPub돋움체_Pro Bold", 11, bold=True, color=(180, 180, 180)) 
-            new_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        elif line_stripped.startswith('## 📊'):
-            run = new_p.add_run(line_stripped.replace('## ', ''))
-            set_font(run, "KoPub돋움체_Pro Bold", 13, bold=True, color=(0, 51, 153)) 
-            new_p.paragraph_format.space_before = Pt(12)
-        elif line_stripped.startswith('## '):
+        if line_stripped.startswith('## '):
             run = new_p.add_run(line_stripped.replace('## ', ''))
             set_font(run, "KoPub돋움체_Pro Medium", 13, bold=True, color=(0, 51, 153))
             new_p.paragraph_format.space_before = Pt(12)
@@ -77,26 +65,42 @@ def add_styled_content_at(target_p, text, doc=None):
         current_p = new_p
     return current_p
 
-# ★ 버그 수정: 표(Table) 내부의 태그까지 완벽하게 스캔하도록 복구
-def replace_placeholder(doc, placeholder, content, is_inline=False):
+# ★ 수정됨: is_inline 대체 시 폰트와 크기를 강제로 주입할 수 있도록 개선
+def replace_placeholder(doc, placeholder, content, is_inline=False, font_name=None, font_size=None, is_bold=False):
     # 1. 일반 단락 검사
     for p in doc.paragraphs:
         if placeholder in p.text:
             if is_inline:
-                p.text = p.text.replace(placeholder, content)
+                text_parts = p.text.split(placeholder)
+                p.clear() # 단락의 정렬 속성은 유지하면서 기존 텍스트(런)만 삭제
+                for i, part in enumerate(text_parts):
+                    if part:
+                        p.add_run(part)
+                    if i < len(text_parts) - 1:
+                        run = p.add_run(content)
+                        if font_name and font_size:
+                            set_font(run, font_name, font_size, is_bold)
             else:
                 p.text = p.text.replace(placeholder, "") 
                 if content: add_styled_content_at(p, content, doc)    
             return True
             
-    # 2. 표 내부 단락 검사 (이 부분이 복구되었습니다!)
+    # 2. 표 내부 단락 검사
     for table in doc.tables:
         for row in table.rows:
             for cell in row.cells:
                 for p in cell.paragraphs:
                     if placeholder in p.text:
                         if is_inline:
-                            p.text = p.text.replace(placeholder, content)
+                            text_parts = p.text.split(placeholder)
+                            p.clear()
+                            for i, part in enumerate(text_parts):
+                                if part:
+                                    p.add_run(part)
+                                if i < len(text_parts) - 1:
+                                    run = p.add_run(content)
+                                    if font_name and font_size:
+                                        set_font(run, font_name, font_size, is_bold)
                         else:
                             p.text = p.text.replace(placeholder, "")
                             if content: add_styled_content_at(p, content, doc)
@@ -108,7 +112,6 @@ def extract_tag(text, tag_name):
     match = re.search(pattern, text, re.DOTALL | re.IGNORECASE)
     return match.group(1).strip() if match else ""
 
-# 4. 스마트 라우터
 def generate_one_shot(prompt):
     fallback_models = ["gemini-2.5-flash", "gemini-1.5-pro", "gemini-1.5-flash"]
     last_error = ""
@@ -133,60 +136,53 @@ def generate_one_shot(prompt):
                     continue
     return None, f"생성 실패 (에러: {last_error[:100]})"
 
-# ★ 메인 실행 함수
 def run_virtual_firm(spec_file, doc_template, target_corp, ir_data, business_status):
     if not spec_file:
         st.error("분석을 위한 기술 명세서(PDF)가 필요합니다.")
         return
 
-    st.subheader(f"🏢 {target_corp if target_corp else 'Virtual Firm'} 프리미엄 전략 보고서 생성 중...")
+    st.subheader(f"🏢 {target_corp if target_corp else 'Virtual Firm'} 전략 보고서 생성 중...")
     
-    with st.spinner("📊 풍성한 비즈니스 프레임워크와 기술가치평가 산출 과정을 작성 중입니다... (약 30~40초 소요)"):
+    with st.spinner("🚀 완벽한 비즈니스 이전을 위한 심층 사업 타당성 및 기술가치평가 산출을 진행 중입니다... (약 20~30초 소요)"):
         try:
             tech_text = extract_text_from_pdf(spec_file)
             ir_text = extract_text_from_pdf(ir_data) if ir_data else ""
             context = f"대상기업: {target_corp}\n기업IR자료: {ir_text}\n사업현황: {business_status}"
             
-            prompt = f"""당신은 최고급 비즈니스 아키텍트이자 공인 기술가치평가사입니다.
+            prompt = f"""당신은 부산대학교 기술지주회사의 최고급 비즈니스 아키텍트이자 공인 기술가치평가사입니다.
             
-            [작성 규칙]
-            1. 분량 준수: 각 섹션별 요구된 분량을 반드시 채워 아주 상세하게 줄글과 개조식을 섞어 작성하세요.
-            2. 마크다운 표(| | |)는 에러를 유발하므로 절대 사용하지 말고, 소제목(##, ###)과 개조식(-)으로 구조화하세요.
-            3. 응답은 반드시 5개의 <태그>를 모두 열고 닫아야 합니다.
+            [작성 규칙 - 절대 엄수]
+            1. 마크다운 표(| 구분 | 내용 | 등)를 절대 사용하지 마세요.
+            2. 비교 분석, 재무 수치, 로드맵 등은 반드시 소제목(##, ###)과 개조식(-, *)을 활용한 텍스트로만 서술하세요.
+            3. 응답은 반드시 아래 5개의 <태그>를 모두 열고 닫아야 합니다.
 
-            <tech_title>핵심 비즈니스 명칭 (20자 내외)</tech_title>
-
-            <summary_box>
-            **1. 예상 기술가치평가액**: [금액 및 이유]
-            **2. 타겟 시장 규모(TAM/SOM)**: [금액]
-            **3. 핵심 경쟁력 지표**: [구체적 수치]
-            </summary_box>
+            <tech_title>이 기술을 기반으로 한 가상 기업의 비즈니스 명칭 (20자 내외 한 줄)</tech_title>
             
             <section_1>
             ## Ⅰ. 기술 개요
-            (1,000자 이상 심층 작성. 기술의 작동 원리와 압도적 경쟁력, 이 기술이 구축하는 비즈니스적 해자(Moat)를 상세히 설명하세요.)
+            (1,000자 이상 심층 작성. 기술의 작동 원리와 압도적 경쟁력, 비즈니스적 해자(Moat)를 상세히 설명하세요.)
             </section_1>
             
             <section_2>
             ## Ⅱ. 문제점 및 해결 방안
-            (800자 이상 심층 작성. 타겟 시장의 치명적인 한계점과 본 기술의 혁신적 해결책을 상세히 설명하세요.)
+            (800자 이상 심층 작성. 타겟 시장의 치명적인 한계점과 혁신적 해결책을 상세히 설명하세요.)
             </section_2>
             
             <section_3>
             ## Ⅲ. Scale-up 및 기술가치평가
             (1,500자 이상 아주 상세히 작성)
-            ### 1. 사업화 로드맵 (단계별 타임라인)
-            ### 2. 시장 규모 및 예상 매출액 (추정치 및 산출 근거 상세 서술)
-            ### 3. 기술가치평가 산출 (수익접근법 로열티공제법 기준)
-            - 산출 과정: 예상매출액 × 로열티율 × 기술기여도 등 실제 계산식을 직접 풀어서 상세히 전개하고 각 수치의 설정 근거를 쓰세요.
+            ### 1. 사업화 로드맵
+            ### 2. 시장 규모 추정 및 예상 매출액
+            ### 3. 기술가치평가 산출
+            - 평가 방법론 명시 및 예상매출액 × 로열티율 × 기술기여도 등 실제 계산식을 직접 풀어서 전개하고 산출 근거를 상세히 쓰세요.
             </section_3>
             
             <section_4>
             ## Ⅳ. Virtual Firm 활용 (최종 제안)
             (1,500자 이상 아주 상세히 작성)
-            ### 1. 3C 분석 (자사/경쟁사/고객 상세 분석)
-            ### 2. SWOT 분석 (강점/약점/기회/위협 상세 분석)
-            ### 3. Lean Canvas (9대 핵심 요소 상세 분석)
+            ### 1. 3C 분석
+            ### 2. SWOT 분석
+            ### 3. Lean Canvas
             ### 4. 최종 창업 및 이전 전략 제안
             </section_4>
 
@@ -199,33 +195,30 @@ def run_virtual_firm(spec_file, doc_template, target_corp, ir_data, business_sta
                 st.error(f"⚠️ AI 응답 생성에 실패했습니다. 사유: {used_model}")
                 return
 
-            st.toast(f"✅ 프리미엄 보고서 생성 완료! (사용 모델: {used_model})")
+            st.toast(f"✅ 심층 비즈니스 분석 완료! (사용 모델: {used_model})")
 
             ai_data = {
                 "tech_title": extract_tag(raw_response, "tech_title"),
-                "summary": extract_tag(raw_response, "summary_box"),
                 "section_1": extract_tag(raw_response, "section_1"),
                 "section_2": extract_tag(raw_response, "section_2"),
                 "section_3": extract_tag(raw_response, "section_3"),
                 "section_4": extract_tag(raw_response, "section_4"),
             }
 
-            # 텍스트 기반 요약 박스 디자인 생성
-            styled_summary = ""
-            if ai_data["summary"]:
-                styled_summary = "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-                styled_summary += "## 📊 Executive Summary (사업 타당성 핵심 지표)\n\n"
-                styled_summary += ai_data["summary"].strip() + "\n\n"
-                styled_summary += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-
-            # Ⅰ장 기술개요 텍스트 맨 앞에 요약 박스 결합
-            combined_section_1 = styled_summary + ai_data["section_1"]
-
             doc = Document(DEFAULT_WORD_TEMPLATE) if os.path.exists(DEFAULT_WORD_TEMPLATE) else Document()
             
-            # 각 섹션 치환 (표 내부까지 정상 작동)
-            replace_placeholder(doc, "{{tech_title}}", ai_data["tech_title"], is_inline=True)
-            replace_placeholder(doc, "{{section_1}}", combined_section_1)
+            # ★ 수정됨: tech_title 삽입 시 "KoPub돋움체_Pro Bold", 18pt 강제 지정
+            replace_placeholder(
+                doc, 
+                "{{tech_title}}", 
+                ai_data["tech_title"], 
+                is_inline=True, 
+                font_name="KoPub돋움체_Pro Bold", 
+                font_size=18, 
+                is_bold=True
+            )
+            
+            replace_placeholder(doc, "{{section_1}}", ai_data["section_1"])
             replace_placeholder(doc, "{{section_2}}", ai_data["section_2"])
             replace_placeholder(doc, "{{section_3}}", ai_data["section_3"])
             replace_placeholder(doc, "{{section_4}}", ai_data["section_4"])
@@ -233,9 +226,9 @@ def run_virtual_firm(spec_file, doc_template, target_corp, ir_data, business_sta
             doc_io = io.BytesIO()
             doc.save(doc_io)
             st.download_button(
-                label="📥 템플릿 완벽 적용 전략 보고서 다운로드", 
+                label="📥 전략 보고서 다운로드 (안정화 버전)", 
                 data=doc_io.getvalue(), 
-                file_name="Virtual_Firm_Premium_Report_Final.docx",
+                file_name="Virtual_Firm_Master_Report.docx",
                 mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
             )
 
