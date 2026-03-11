@@ -35,14 +35,19 @@ def extract_text_from_pdf(uploaded_file):
     doc = fitz.open(stream=uploaded_file.read(), filetype="pdf")
     return "".join([page.get_text() for page in doc])[:15000]
 
-# 3. [C안 구현] 핵심 지표 요약 박스 생성 함수 (★ 스타일 에러 수정)
+# 3. [C안 구현] 핵심 지표 요약 박스 생성 함수 (★ 스타일 에러 원천 차단)
 def add_summary_box(doc, summary_text):
     table = doc.add_table(rows=1, cols=1)
-    table.style = 'Table Grid' # 모든 워드에서 지원하는 기본 스타일로 변경
+    
+    # 템플릿에 기본 표 스타일조차 없는 경우를 대비한 안전장치
+    try:
+        table.style = 'Table Grid' 
+    except Exception:
+        pass # 스타일이 없어도 무시하고 진행
     
     cell = table.cell(0, 0)
     
-    # 옅은 회색 배경 직접 추가
+    # 워드 테마와 상관없이 파이썬이 강제로 옅은 회색 배경을 칠함
     shading_elm = OxmlElement('w:shd')
     shading_elm.set(qn('w:fill'), 'F2F2F2')
     cell._tc.get_or_add_tcPr().append(shading_elm)
@@ -215,7 +220,7 @@ def run_virtual_firm(spec_file, doc_template, target_corp, ir_data, business_sta
 
             doc = Document(DEFAULT_WORD_TEMPLATE) if os.path.exists(DEFAULT_WORD_TEMPLATE) else Document()
             
-            # [C안] 요약 박스 삽입
+            # [C안] 요약 박스 삽입 (에러 방어 완벽 적용)
             if ai_data["summary"]:
                 add_summary_box(doc, ai_data["summary"])
 
