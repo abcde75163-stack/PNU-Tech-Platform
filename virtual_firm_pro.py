@@ -35,30 +35,7 @@ def extract_text_from_pdf(uploaded_file):
     doc = fitz.open(stream=uploaded_file.read(), filetype="pdf")
     return "".join([page.get_text() for page in doc])[:15000]
 
-# 3. [C안 구현] 핵심 지표 요약 박스 생성 함수 (★ 스타일 완전 제거)
-def add_summary_box(doc, summary_text):
-    # 스타일 지정 없이 기본 뼈대만 생성
-    table = doc.add_table(rows=1, cols=1)
-    cell = table.cell(0, 0)
-    
-    # 워드 테마와 상관없이 파이썬이 강제로 옅은 회색 배경을 칠함
-    shading_elm = OxmlElement('w:shd')
-    shading_elm.set(qn('w:fill'), 'F2F2F2')
-    cell._tc.get_or_add_tcPr().append(shading_elm)
-
-    cell.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
-    
-    lines = summary_text.split('\n')
-    for line in lines:
-        if not line.strip(): continue
-        p = cell.add_paragraph()
-        p.alignment = WD_ALIGN_PARAGRAPH.LEFT
-        run = p.add_run(line.strip())
-        set_font(run, "KoPub돋움체_Pro Medium", 11, bold=True)
-    
-    doc.add_paragraph()
-
-# 4. 콘텐츠 삽입 및 스타일링
+# 3. 콘텐츠 삽입 및 스타일링 (요약 박스 효과 포함)
 def add_styled_content_at(target_p, text, doc=None):
     lines = str(text).split('\n')
     current_p = target_p
@@ -71,9 +48,15 @@ def add_styled_content_at(target_p, text, doc=None):
         current_p._p.addnext(new_p_xml)
         new_p = Paragraph(new_p_xml, current_p._parent)
         
-        if line_stripped.startswith('## '):
+        # 제목 및 요약 박스 스타일링
+        if line_stripped.startswith('## 📊'):
+            run = new_p.add_run(line_stripped.replace('## ', ''))
+            set_font(run, "KoPub돋움체_Pro Bold", 13, bold=True, color=(200, 50, 50)) # 요약 제목 붉은색 강조
+            new_p.paragraph_format.space_before = Pt(12)
+        elif line_stripped.startswith('## '):
             run = new_p.add_run(line_stripped.replace('## ', ''))
             set_font(run, "KoPub돋움체_Pro Medium", 13, bold=True, color=(0, 51, 153))
+            new_p.paragraph_format.space_before = Pt(12)
         elif line_stripped.startswith('### '):
             run = new_p.add_run(line_stripped.replace('### ', ''))
             set_font(run, "KoPub돋움체_Pro Medium", 12, bold=True)
@@ -106,7 +89,7 @@ def extract_tag(text, tag_name):
     match = re.search(pattern, text, re.DOTALL | re.IGNORECASE)
     return match.group(1).strip() if match else ""
 
-# 5. 스마트 라우터
+# 4. 스마트 라우터
 def generate_one_shot(prompt):
     fallback_models = ["gemini-2.5-flash", "gemini-1.5-pro", "gemini-1.5-flash"]
     last_error = ""
@@ -139,57 +122,54 @@ def run_virtual_firm(spec_file, doc_template, target_corp, ir_data, business_sta
 
     st.subheader(f"🏢 {target_corp if target_corp else 'Virtual Firm'} 프리미엄 전략 보고서 생성 중...")
     
-    with st.spinner("📊 핵심 지표 요약 박스 및 비즈니스 표를 구성하고 있습니다... (약 20~30초 소요)"):
+    with st.spinner("📊 풍성한 비즈니스 프레임워크와 기술가치평가 산출 과정을 작성 중입니다... (약 30~40초 소요)"):
         try:
             tech_text = extract_text_from_pdf(spec_file)
             ir_text = extract_text_from_pdf(ir_data) if ir_data else ""
             context = f"대상기업: {target_corp}\n기업IR자료: {ir_text}\n사업현황: {business_status}"
             
             prompt = f"""당신은 최고급 비즈니스 아키텍트이자 공인 기술가치평가사입니다.
-            텍스트 위주의 보고서를 탈피하기 위해 핵심 요약 박스와 체계적인 구조로 응답하세요.
-
+            
             [작성 규칙]
-            1. 마크다운 표(| | |)는 에러를 유발하므로 절대 사용하지 말고, 소제목(##)과 개조식(-)으로 깔끔하게 구조화하세요.
-            2. 응답은 반드시 5개의 <태그>를 모두 열고 닫아야 합니다.
+            1. 분량 준수: 각 섹션별 요구된 분량을 반드시 채워 아주 상세하게 줄글과 개조식을 섞어 작성하세요.
+            2. 마크다운 표(| | |)는 에러를 유발하므로 절대 사용하지 말고, 소제목(##, ###)과 개조식(-)으로 구조화하세요.
+            3. 응답은 반드시 5개의 <태그>를 모두 열고 닫아야 합니다.
 
             <tech_title>핵심 비즈니스 명칭 (20자 내외)</tech_title>
 
             <summary_box>
-            보고서 최상단에 배치될 핵심 요약입니다. (반드시 아래 3가지를 포함하여 짧고 강렬하게 작성)
-            1. 예상 기술가치평가액: [금액]
-            2. 타겟 시장 규모(TAM/SOM): [금액]
-            3. 핵심 경쟁력 지표: [예: 효율 40% 향상 등]
+            ## 📊 Executive Summary (사업 타당성 핵심 지표)
+            **1. 예상 기술가치평가액**: [금액 및 간략한 이유]
+            **2. 타겟 시장 규모(TAM/SOM)**: [금액]
+            **3. 핵심 경쟁력 지표**: [효율 N% 향상 등 구체적 수치]
             </summary_box>
             
             <section_1>
-            Ⅰ. 기술 개요
-            - 기술의 작동 원리와 압도적 경쟁력
-            - 비즈니스적 해자(Moat)
+            ## Ⅰ. 기술 개요
+            (1,000자 이상 심층 작성. 기술의 작동 원리와 압도적 경쟁력, 이 기술이 구축하는 비즈니스적 해자(Moat)를 상세히 설명하세요.)
             </section_1>
             
             <section_2>
-            Ⅱ. 문제점 및 해결 방안
-            - 타겟 시장의 치명적인 한계점
-            - 본 기술의 혁신적 해결책
+            ## Ⅱ. 문제점 및 해결 방안
+            (800자 이상 심층 작성. 타겟 시장의 치명적인 한계점과 본 기술의 혁신적 해결책을 상세히 설명하세요.)
             </section_2>
             
             <section_3>
-            Ⅲ. Scale-up 및 기술가치평가
-            ## 1. 사업화 로드맵
-            - 단계별 타임라인
-            ## 2. 시장 규모 및 예상 매출액
-            - 추정치 및 산출 근거
-            ## 3. 기술가치평가 산출 (수식 상세 전개)
-            - 수익접근법 등 평가 방법론 명시
-            - 산출 과정: 예상매출액 × 로열티율 × 기술기여도 등 실제 계산식을 직접 풀어서 상세히 서술
+            ## Ⅲ. Scale-up 및 기술가치평가
+            (1,500자 이상 아주 상세히 작성)
+            ### 1. 사업화 로드맵 (단계별 타임라인)
+            ### 2. 시장 규모 및 예상 매출액 (추정치 및 산출 근거 상세 서술)
+            ### 3. 기술가치평가 산출 (수익접근법 로열티공제법 기준)
+            - 산출 과정: 예상매출액 × 로열티율 × 기술기여도 등 실제 계산식을 직접 풀어서 상세히 전개하고 각 수치의 설정 근거를 쓰세요.
             </section_3>
             
             <section_4>
-            Ⅳ. Virtual Firm 활용 (최종 제안)
-            ## 1. 3C 분석 (자사/경쟁사/고객)
-            ## 2. SWOT 분석 (강점/약점/기회/위협)
-            ## 3. Lean Canvas (9대 핵심 요소)
-            ## 4. 최종 창업 및 이전 전략 제안
+            ## Ⅳ. Virtual Firm 활용 (최종 제안)
+            (1,500자 이상 아주 상세히 작성)
+            ### 1. 3C 분석 (자사/경쟁사/고객 상세 분석)
+            ### 2. SWOT 분석 (강점/약점/기회/위협 상세 분석)
+            ### 3. Lean Canvas (9대 핵심 요소 상세 분석)
+            ### 4. 최종 창업 및 이전 전략 제안
             </section_4>
 
             데이터: {tech_text}
@@ -212,15 +192,14 @@ def run_virtual_firm(spec_file, doc_template, target_corp, ir_data, business_sta
                 "section_4": extract_tag(raw_response, "section_4"),
             }
 
+            # [핵심] 요약 박스를 문서 맨 뒤가 아니라 1단원(section_1) 가장 위에 텍스트 형태로 결합
+            combined_section_1 = ai_data["summary"] + "\n\n" + ai_data["section_1"] if ai_data["summary"] else ai_data["section_1"]
+
             doc = Document(DEFAULT_WORD_TEMPLATE) if os.path.exists(DEFAULT_WORD_TEMPLATE) else Document()
             
-            # [C안] 요약 박스 삽입
-            if ai_data["summary"]:
-                add_summary_box(doc, ai_data["summary"])
-
             # 각 섹션 치환
             replace_placeholder(doc, "{{tech_title}}", ai_data["tech_title"], is_inline=True)
-            replace_placeholder(doc, "{{section_1}}", ai_data["section_1"])
+            replace_placeholder(doc, "{{section_1}}", combined_section_1)
             replace_placeholder(doc, "{{section_2}}", ai_data["section_2"])
             replace_placeholder(doc, "{{section_3}}", ai_data["section_3"])
             replace_placeholder(doc, "{{section_4}}", ai_data["section_4"])
@@ -228,7 +207,7 @@ def run_virtual_firm(spec_file, doc_template, target_corp, ir_data, business_sta
             doc_io = io.BytesIO()
             doc.save(doc_io)
             st.download_button(
-                label="📥 프리미엄 전략 보고서 다운로드", 
+                label="📥 내용 복구된 프리미엄 보고서 다운로드", 
                 data=doc_io.getvalue(), 
                 file_name="Virtual_Firm_Premium_Report.docx",
                 mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
