@@ -35,7 +35,7 @@ def extract_text_from_pdf(uploaded_file):
     doc = fitz.open(stream=uploaded_file.read(), filetype="pdf")
     return "".join([page.get_text() for page in doc])[:15000]
 
-# 3. 콘텐츠 삽입 및 스타일링 (요약 박스 효과 포함)
+# 3. 콘텐츠 삽입 및 스타일링 (텍스트 박스 디자인 포함)
 def add_styled_content_at(target_p, text, doc=None):
     lines = str(text).split('\n')
     current_p = target_p
@@ -48,10 +48,14 @@ def add_styled_content_at(target_p, text, doc=None):
         current_p._p.addnext(new_p_xml)
         new_p = Paragraph(new_p_xml, current_p._parent)
         
-        # 제목 및 요약 박스 스타일링
-        if line_stripped.startswith('## 📊'):
+        # 💡 [핵심] 특수기호를 활용한 요약 박스 상/하단 선 디자인
+        if "━━━━━━━━━━━━━━━━━━" in line_stripped:
+            run = new_p.add_run(line_stripped)
+            set_font(run, "KoPub돋움체_Pro Bold", 11, bold=True, color=(180, 180, 180)) # 연한 회색 선
+            new_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        elif line_stripped.startswith('## 📊'):
             run = new_p.add_run(line_stripped.replace('## ', ''))
-            set_font(run, "KoPub돋움체_Pro Bold", 13, bold=True, color=(200, 50, 50)) # 요약 제목 붉은색 강조
+            set_font(run, "KoPub돋움체_Pro Bold", 13, bold=True, color=(0, 51, 153)) # 파란색 포인트
             new_p.paragraph_format.space_before = Pt(12)
         elif line_stripped.startswith('## '):
             run = new_p.add_run(line_stripped.replace('## ', ''))
@@ -138,10 +142,9 @@ def run_virtual_firm(spec_file, doc_template, target_corp, ir_data, business_sta
             <tech_title>핵심 비즈니스 명칭 (20자 내외)</tech_title>
 
             <summary_box>
-            ## 📊 Executive Summary (사업 타당성 핵심 지표)
-            **1. 예상 기술가치평가액**: [금액 및 간략한 이유]
+            **1. 예상 기술가치평가액**: [금액 및 이유]
             **2. 타겟 시장 규모(TAM/SOM)**: [금액]
-            **3. 핵심 경쟁력 지표**: [효율 N% 향상 등 구체적 수치]
+            **3. 핵심 경쟁력 지표**: [구체적 수치]
             </summary_box>
             
             <section_1>
@@ -192,12 +195,19 @@ def run_virtual_firm(spec_file, doc_template, target_corp, ir_data, business_sta
                 "section_4": extract_tag(raw_response, "section_4"),
             }
 
-            # [핵심] 요약 박스를 문서 맨 뒤가 아니라 1단원(section_1) 가장 위에 텍스트 형태로 결합
-            combined_section_1 = ai_data["summary"] + "\n\n" + ai_data["section_1"] if ai_data["summary"] else ai_data["section_1"]
+            # 💡 [디자인 핵심] 표(Table) 함수를 없애고 선(Line)을 이용해 텍스트 기반 요약 박스 디자인 생성
+            styled_summary = ""
+            if ai_data["summary"]:
+                styled_summary = "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                styled_summary += "## 📊 Executive Summary (사업 타당성 핵심 지표)\n\n"
+                styled_summary += ai_data["summary"].strip() + "\n\n"
+                styled_summary += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+
+            # Ⅰ장 기술개요(section_1) 텍스트 맨 앞에 요약 박스를 강제로 이어 붙임
+            combined_section_1 = styled_summary + ai_data["section_1"]
 
             doc = Document(DEFAULT_WORD_TEMPLATE) if os.path.exists(DEFAULT_WORD_TEMPLATE) else Document()
             
-            # 각 섹션 치환
             replace_placeholder(doc, "{{tech_title}}", ai_data["tech_title"], is_inline=True)
             replace_placeholder(doc, "{{section_1}}", combined_section_1)
             replace_placeholder(doc, "{{section_2}}", ai_data["section_2"])
@@ -207,7 +217,7 @@ def run_virtual_firm(spec_file, doc_template, target_corp, ir_data, business_sta
             doc_io = io.BytesIO()
             doc.save(doc_io)
             st.download_button(
-                label="📥 내용 복구된 프리미엄 보고서 다운로드", 
+                label="📥 최종 완성형 전략 보고서 다운로드", 
                 data=doc_io.getvalue(), 
                 file_name="Virtual_Firm_Premium_Report.docx",
                 mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
