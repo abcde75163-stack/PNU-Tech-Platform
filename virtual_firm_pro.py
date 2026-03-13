@@ -40,8 +40,6 @@ def add_styled_content(doc, text):
     lines = str(text).split('\n')
     for line in lines:
         line_stripped = line.strip()
-        
-        # 만약 AI가 실수로 구분자 기호를 출력했다면 화면에 보이지 않게 청소
         line_stripped = re.sub(r'\[SECTION_\d\]|\[TECH_TITLE\]', '', line_stripped).strip()
         if not line_stripped: continue
 
@@ -49,7 +47,7 @@ def add_styled_content(doc, text):
             p = doc.add_paragraph()
             run = p.add_run(line_stripped.replace('## ', ''))
             set_font(run, "KoPub돋움체_Pro Medium", 13, bold=True)
-            p.paragraph_format.space_before = Pt(12)
+            p.paragraph_format.space_before = Pt(18)
             continue
             
         p = doc.add_paragraph()
@@ -65,20 +63,15 @@ def add_styled_content(doc, text):
                 run = p.add_run(part)
                 set_font(run, "KoPub돋움체_Pro Light", 11)
 
-# 💡 [핵심] 중복 복제를 완벽하게 차단하는 스마트 파싱 함수
 def parse_ai_response(text):
     data = {"tech_title": "", "section_1": "", "section_2": "", "section_3": "", "section_4": ""}
-    
-    # [마커] 부터 다음 [마커] 직전까지만 정확히 잘라내어 중복을 0%로 만듦
     pattern = r'\[(TECH_TITLE|SECTION_1|SECTION_2|SECTION_3|SECTION_4)\](.*?)(?=\[(?:TECH_TITLE|SECTION_1|SECTION_2|SECTION_3|SECTION_4)\]|$)'
     matches = re.finditer(pattern, text, re.DOTALL | re.IGNORECASE)
-    
     for match in matches:
         key = match.group(1).lower()
         content = match.group(2).strip()
         if key in data:
             data[key] = content
-            
     return data
 
 # 5. 메인 실행 함수
@@ -94,37 +87,38 @@ def run_virtual_firm(spec_file, doc_template, target_corp, ir_data, business_sta
         st.error("❌ 파일에서 텍스트를 읽을 수 없습니다. (이미지 스캔본 여부 확인)")
         return
 
-    with st.spinner("🚀 데이터 중복 오류를 차단하며 완벽한 문서를 조립 중입니다... (약 15초 소요)"):
+    with st.spinner("🚀 VC 심사역 수준의 방대한 심층 텍스트를 생성 중입니다... (데이터 중복 차단 완비)"):
         try:
             ir_text = extract_text_from_file(ir_data) if ir_data else ""
             context = f"타겟 기업: {target_corp}\nIR 데이터: {ir_text}\n사업 현황: {business_status}"
             
-            # 💡 [프롬프트] 태그 형식을 가장 안전한 대괄호[ ] 구분자로 변경
-            prompt = f"""당신은 국내 최고의 기술사업화 전략가이자 가치평가 전문가입니다.
-            제공된 [특허 명세서]의 실제 기술 내용을 기반으로 아주 상세하고 전문적인 '심층 분석 보고서'를 작성하세요.
+            # 💡 [프롬프트] 요약 절대 금지, 분량 한계치까지 확장 강제
+            prompt = f"""당신은 국내 최고의 기술사업화 전략가이자 벤처캐피탈(VC) 수석 심사역입니다.
+            제공된 [특허 명세서]를 바탕으로 실제 대규모 투자 유치에 사용될 '초정밀 심층 비즈니스 플랜'을 작성해야 합니다.
 
             [특허 명세서 원본 데이터]
             {tech_text}
 
-            [작성 지침 - 절대 엄수]
-            1. 마크다운 표(|---| 등)를 절대 사용하지 마세요. 모든 정보는 소제목(##)과 개조식(-, *) 텍스트로만 깔끔하게 작성하세요.
-            2. 각 섹션은 3~5개의 핵심 문단(또는 개조식 목록)으로 짜임새 있게 작성하세요.
-            3. 응답은 반드시 아래 제공된 5개의 [구분자]를 사용하여 섹션을 명확히 나누어야 합니다. (구분자 형태를 절대 변경하지 마세요)
+            [작성 지침 - 분량 및 깊이 절대 엄수]
+            1. 절대로 요약하거나 짧게 끝내지 마세요. 각 [SECTION]마다 다양한 소제목(##)을 최소 4~5개 이상 사용하고, 하위에 상세한 개조식(-, *) 설명과 분석을 덧붙여 **각 섹션이 최소 10~15문단 이상의 방대한 분량**이 되도록 길고 깊게 작성하세요.
+            2. 마크다운 표(|---|)는 에러를 유발하므로 절대 사용하지 마세요. 모든 수치, 표, 분석 결과는 '글'로 상세히 풀어서 나열하세요.
+            3. 명세서에 구체적인 데이터가 부족하더라도, 기술의 본질을 바탕으로 합리적인 시장 가설, 재무 시나리오, 응용 분야를 매우 구체적으로 추론하여 분량과 전문성을 극대화하세요.
+            4. 응답은 반드시 아래의 5개 [구분자]를 사용하여 나누어야 합니다.
 
             [TECH_TITLE]
-            (여기에 기술의 핵심을 관통하는 20자 내외의 전문적인 사업화 명칭 작성)
+            (기술의 핵심 가치를 보여주는 20자 내외의 임팩트 있는 비즈니스 명칭 한 줄만 작성)
             
             [SECTION_1]
-            (여기에 기술의 메커니즘, 작동 원리, 차별성을 아주 상세히 작성)
+            (기술의 근본적 메커니즘, 화학적/물리적 작동 원리, 기존 기술의 한계점과 본 기술의 혁신적 돌파구, 그리고 확장 가능한 파생 기술 가능성까지 아주 상세히 쪼개어 분석하세요.)
             
             [SECTION_2]
-            (여기에 전방 산업 트렌드 및 해결하려는 과제(Pain point) 작성)
+            (글로벌 전방 산업의 메가 트렌드, 가치 사슬(Value Chain) 분석, 타겟 고객군의 치명적 페인 포인트(Pain point), 본 기술이 시장에 진입했을 때의 파급 효과를 심층 분석하세요.)
             
             [SECTION_3]
-            (여기에 단계별 스케일업 전략 및 '수익접근법' 예상 매출 도출 근거 상세 작성)
+            (단기/중기/장기(5년) 스케일업 마일스톤을 연도별로 아주 길게 서술하세요. 특히 '수익접근법'을 활용한 기술가치평가 시, 제품 단가, 예상 시장 점유율, 초기 투자 비용, 감가상각 등의 가설을 구체적인 숫자로 제시하고 그 산출 근거를 텍스트로 상세히 증명하세요.)
             
             [SECTION_4]
-            (여기에 3C/SWOT 정밀 분석 및 '기술이전' vs '직접 창업'에 대한 최종 제안 작성)
+            (내부 역량(3C) 및 외부 환경(SWOT)을 다양한 측면에서 텍스트로 다각도로 분석하세요. 최종적으로 이 기술의 특성(예: 대규모 설비 필요성, 시장 진입 속도 등)을 고려할 때 '기술이전(Licensing)'이 유리한지 '직접 창업(Spin-off)'이 유리한지 하나를 명확히 선택하고, 투자자를 설득할 수 있는 정량적/정성적 근거를 아주 길고 논리적으로 서술하세요.)
 
             [기타 정보]
             {context}"""
@@ -144,7 +138,6 @@ def run_virtual_firm(spec_file, doc_template, target_corp, ir_data, business_sta
                         raise api_e
                     time.sleep(3)
 
-            # 💡 [해결] 여기서 문서가 30페이지씩 폭주하는 것을 원천 차단
             ai_data = parse_ai_response(raw_response)
             
             doc = Document()
@@ -195,7 +188,7 @@ def run_virtual_firm(spec_file, doc_template, target_corp, ir_data, business_sta
             doc_io = io.BytesIO()
             doc.save(doc_io)
             
-            st.success("✅ 오류 없이 완벽한 비율의 심층 보고서 작성이 완료되었습니다!")
+            st.success("✅ 오류 없이 방대한 분량의 심층 보고서 작성이 완료되었습니다!")
             st.download_button(label="📥 최종 심층 보고서 다운로드 (클릭)", data=doc_io.getvalue(), 
                                file_name=f"VF_Master_Report_{target_corp}.docx",
                                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document")
