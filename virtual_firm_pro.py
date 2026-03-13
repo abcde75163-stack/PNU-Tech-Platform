@@ -133,7 +133,7 @@ def run_virtual_firm(spec_file, doc_template, target_corp, ir_data, business_sta
             - <section_4>: 3C 분석, SWOT 분석, Lean Canvas, 최종 제안 포함 [cite: 637, 670, 695, 707]
             데이터: {context}\n명세서: {tech_text}"""
 
-            response = client.models.generate_content(model="gemini-2.5-flash Lite", contents=prompt)
+            response = client.models.generate_content(model="gemini-2.5-flash-Lite", contents=prompt)
             raw_response = response.text.strip()
 
             def extract_tag(text, tag_name):
@@ -161,4 +161,5 @@ def run_virtual_firm(spec_file, doc_template, target_corp, ir_data, business_sta
                                file_name="Virtual_Firm_Master_Report.docx")
         except Exception as e:
             st.error(f"오류 발생: {str(e)}")
+
 
