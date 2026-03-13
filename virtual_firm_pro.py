@@ -3,14 +3,11 @@ import fitz
 from google import genai
 import io
 import re
-import os
 import time
 from docx import Document
 from docx.shared import Pt
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml.ns import qn
-from docx.oxml import OxmlElement
-from docx.text.paragraph import Paragraph
 
 # [설정 - API]
 try:
@@ -18,9 +15,6 @@ try:
     client = genai.Client(api_key=MY_API_KEY)
 except Exception as e:
     st.error("API 키 로드 실패. Secrets 설정을 확인하세요.")
-
-# 고정 템플릿 파일명 설정
-DEFAULT_WORD_TEMPLATE = "default_vf_template.docx"
 
 # 1. 폰트 설정
 def set_font(run, font_name, size, bold=False):
@@ -44,61 +38,39 @@ def extract_text_from_file(uploaded_file):
     except Exception: return ""
     return ""
 
-# 3. 레이아웃 보존형 삽입 (줄바꿈 및 스타일 적용)
-def add_styled_content_at(target_p, text):
-    lines = [line.strip() for line in str(text).split('\n') if line.strip()]
-    if not lines: return target_p
-    orig_format = target_p.paragraph_format
-    left_indent = orig_format.left_indent
-    right_indent = orig_format.right_indent
-    alignment = target_p.alignment
-    current_p = target_p
-    for i, line in enumerate(lines):
-        if i == 0:
-            current_p.text = "" 
-            p_to_style = current_p
-        else:
-            new_p_xml = OxmlElement('w:p')
-            current_p._p.addnext(new_p_xml)
-            p_to_style = Paragraph(new_p_xml, current_p._parent)
-            p_to_style.paragraph_format.left_indent = left_indent
-            p_to_style.paragraph_format.right_indent = right_indent
-            p_to_style.alignment = alignment
-            current_p = p_to_style
-        if line.startswith('## '):
-            run = p_to_style.add_run(line.replace('## ', ''))
-            set_font(run, "KoPub돋움체_Pro Medium", 12, bold=True)
-        else:
-            p_to_style.paragraph_format.line_spacing = 1.6
-            p_to_style.paragraph_format.space_after = Pt(10)
-            parts = re.split(r'(\*\*.*?\*\*)', line)
-            for part in parts:
-                if part.startswith('**') and part.endswith('**'):
-                    run = p_to_style.add_run(part.replace('**', ''))
-                    set_font(run, "KoPub돋움체_Pro Medium", 11, bold=True)
-                else:
-                    run = p_to_style.add_run(part)
-                    set_font(run, "KoPub돋움체_Pro Light", 11)
-    return current_p
+# 3. 스타일 콘텐츠 삽입 (표 없이 개조식 텍스트 최적화)
+def add_styled_content(doc, text):
+    lines = str(text).split('\n')
+    for line in lines:
+        line_stripped = line.strip()
+        if not line_stripped: continue
+        
+        if line_stripped.startswith('## '): # 소제목
+            p = doc.add_paragraph()
+            run = p.add_run(line_stripped.replace('## ', ''))
+            set_font(run, "KoPub돋움체_Pro Medium", 13, bold=True)
+            p.paragraph_format.space_before = Pt(12)
+            continue
+            
+        p = doc.add_paragraph()
+        p.paragraph_format.line_spacing = 1.6
+        p.paragraph_format.space_after = Pt(10)
+        
+        # 볼드체(**) 처리
+        parts = re.split(r'(\*\*.*?\*\*)', line_stripped)
+        for part in parts:
+            if part.startswith('**') and part.endswith('**'):
+                run = p.add_run(part.replace('**', ''))
+                set_font(run, "KoPub돋움체_Pro Medium", 11, bold=True)
+            else:
+                run = p.add_run(part)
+                set_font(run, "KoPub돋움체_Pro Light", 11)
 
-# 4. 템플릿 치환
-def replace_placeholder(doc, placeholder, content, is_inline=False, font_name=None, font_size=None, is_bold=False):
-    def process_p(p):
-        if placeholder in p.text:
-            if is_inline:
-                p.text = p.text.replace(placeholder, str(content))
-                for run in p.runs: set_font(run, font_name, font_size, bold=is_bold)
-            else: add_styled_content_at(p, content)
-            return True
-        return False
-    for p in doc.paragraphs:
-        if process_p(p): return True
-    for table in doc.tables:
-        for row in table.rows:
-            for cell in row.cells:
-                for p in cell.paragraphs:
-                    if process_p(p): return True
-    return False
+# 💡 태그 추출 방어 코드
+def extract_tag(text, tag_name):
+    pattern = f"<{tag_name}>(.*?)(?:</{tag_name}>|$)"
+    match = re.search(pattern, text, re.DOTALL | re.IGNORECASE)
+    return match.group(1).strip() if match else ""
 
 # 5. 메인 실행 함수
 def run_virtual_firm(spec_file, doc_template, target_corp, ir_data, business_status):
@@ -108,58 +80,83 @@ def run_virtual_firm(spec_file, doc_template, target_corp, ir_data, business_sta
 
     st.subheader(f"🏢 {target_corp if target_corp else 'Virtual Firm'} 심층 보고서 생성")
     tech_text = extract_text_from_file(spec_file)
+    
     if len(tech_text.strip()) < 50:
-        st.error("❌ 파일에서 텍스트를 읽을 수 없습니다. (스캔본 여부 확인)")
+        st.error("❌ 파일에서 텍스트를 읽을 수 없습니다. (이미지 스캔본 여부 확인)")
         return
 
-    with st.spinner("🚀 고퀄리티 심층 분석 및 텍스트 나열형 보고서 작성 중..."):
+    with st.spinner("🚀 환각 방지 및 심층 텍스트 분석 중... (약 20~30초 소요)"):
         try:
             ir_text = extract_text_from_file(ir_data) if ir_data else ""
             context = f"타겟 기업: {target_corp}\nIR 데이터: {ir_text}\n사업 현황: {business_status}"
             
-            # 💡 [프롬프트 고도화] 표 작성 금지 및 글로 나열 지시
-            prompt = f"""당신은 국내 최고의 기술사업화 전략가이자 가치평가 전문가입니다.
-            반드시 제공된 [특허 명세서]의 실제 공학적 내용을 바탕으로 '글로 나열'하는 방식의 심층 보고서를 작성하세요.
+            # [프롬프트] 요약 금지 및 심층 서술 명령 극대화
+            prompt = f"""당신은 국내 최고의 기술사업화 전문가이자 전략 컨설턴트입니다.
+            제공된 [특허 명세서]의 실제 기술 내용을 기반으로, 절대로 요약하지 말고 아주 상세하고 전문적인 '심층 분석 보고서'를 작성하세요.
 
-            [특허 명세서]
+            [특허 명세서 원본 데이터]
             {tech_text}
 
             [작성 지침 - 절대 엄수]
-            1. 마크다운 표(|---| 등)를 절대 사용하지 마세요. 모든 정보는 소제목(##)과 개조식(Bullet points) 텍스트로만 나열하세요.
-            2. 응답은 반드시 <tech_title>, <section_1>, <section_2>, <section_3>, <section_4> 태그로 감싸세요.
-            3. 각 섹션은 최소 5~8개 이상의 상세 문단(또는 긴 개조식 목록)으로 매우 풍성하게 작성하세요.
-            
-            [섹션별 구성 가이드]
-            - <section_3>: 단계별 스케일업(Scale-up) 로드맵을 연도별로 상세히 글로 나열하고, 기술가치평가(수익접근법) 수식과 함께 해당 수치가 도출된 가정(단가, 판매량, 점유율 등)을 구체적 근거와 함께 서술하세요.
-            - <section_4>: 3C 및 SWOT 분석 내용을 개조식으로 상세 기술하고, 최종적으로 이 기술을 '기술이전'할지 '직접 창업'할지 명확히 선택하여 그 이유를 정량적/정성적 근거를 들어 논리적으로 제안하세요.
+            1. 모든 내용은 소제목(##)과 개조식(-, *) 텍스트로만 '글로 길게' 작성하세요. (표 사용 절대 금지)
+            2. 응답은 반드시 <tech_title>, <section_1>, <section_2>, <section_3>, <section_4> 태그 형식을 유지하세요.
+            3. 각 섹션은 반드시 A4 용지 반 페이지 이상이 채워질 만큼 **문단별로 깊이 있게(5~10문단 이상)** 서술하세요.
+
+            [섹션별 필수 포함 내용]
+            - <tech_title>: 기술의 핵심을 관통하는 전문적인 기술 비즈니스 명칭
+            - <section_1>: 기술의 메커니즘, 작동 원리, 기존 기술 대비 차별성을 명세서 기반으로 아주 상세히 분석
+            - <section_2>: 전방 산업 트렌드 및 해결하려는 페인 포인트(Pain point) 심층 분석
+            - <section_3>: 단계별 스케일업 전략. '수익접근법' 기술가치평가 수식을 제시하고, 예상 매출 도출의 근거(가정)를 상세히 글로 나열
+            - <section_4>: 3C/SWOT 정밀 분석. 최종적으로 '기술이전' vs '직접 창업' 중 하나를 선택하고 그 근거를 매우 논리적으로 서술
 
             [기타 정보]
             {context}"""
 
             response = client.models.generate_content(
-                model="models/gemini-2.5-flash-lite", 
+                model="models/gemini-2.5-flash-lite", # 가장 안정적인 모델로 변경
                 contents=prompt
             )
             raw_response = response.text.strip()
 
-            def extract_tag(text, tag_name):
-                pattern = f"<{tag_name}>(.*?)(?:</{tag_name}>|$)"
-                match = re.search(pattern, text, re.DOTALL | re.IGNORECASE)
-                return match.group(1).strip() if match else ""
-
             ai_data = {t: extract_tag(raw_response, t) for t in ["tech_title", "section_1", "section_2", "section_3", "section_4"]}
-            doc = Document(doc_template if doc_template else DEFAULT_WORD_TEMPLATE)
+            
+            # 💡 [핵심] 템플릿 방식 탈피 - 새 문서로 조립
+            doc = Document()
+            
+            # 제목 섹션
+            title_p = doc.add_paragraph("\n\n")
+            title_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            clean_title = ai_data.get("tech_title", "심층 사업화 보고서").replace('#', '').replace('*', '').strip()
+            title_run = title_p.add_run(f"Virtual Firm 심층 사업화 전략 보고서\n\n[{clean_title}]")
+            set_font(title_run, "KoPub돋움체_Pro Bold", 18, bold=True)
+            
+            doc.add_page_break()
 
-            replace_placeholder(doc, "[[tech_title]]", ai_data['tech_title'], is_inline=True, 
-                                font_name="KoPub돋움체_Pro Bold", font_size=18, is_bold=True)
-            for i in range(1, 5):
-                replace_placeholder(doc, "{{" + f"section_{i}" + "}}", ai_data[f'section_{i}'])
+            # 본문 섹션들
+            sections = [
+                ("Ⅰ. 기술 개요 및 메커니즘 분석", "section_1"),
+                ("Ⅱ. 시장 트렌드 및 과제 해결 분석", "section_2"),
+                ("Ⅲ. Scale-up 및 심층 재무 로드맵", "section_3"),
+                ("Ⅳ. 최종 사업화 제안 (이전 vs 창업)", "section_4")
+            ]
+
+            for title_text, key in sections:
+                h_p = doc.add_paragraph()
+                set_font(h_p.add_run(f"\n{title_text}"), "KoPub돋움체_Pro Bold", 15, bold=True)
+                h_p.paragraph_format.space_before = Pt(15)
+                
+                content = ai_data.get(key, "")
+                if content:
+                    add_styled_content(doc, content)
+                else:
+                    doc.add_paragraph("생성된 내용이 없습니다.")
 
             doc_io = io.BytesIO()
             doc.save(doc_io)
-            st.success("✅ 심층 보고서 작성이 완료되었습니다!")
-            st.download_button(label="📥 심층 보고서 다운로드", data=doc_io.getvalue(), 
-                               file_name=f"VF_Strategic_Report_{target_corp}.docx")
+            
+            st.success("✅ 고품질 심층 보고서 작성이 완료되었습니다!")
+            st.download_button(label="📥 최종 심층 보고서 다운로드", data=doc_io.getvalue(), 
+                               file_name=f"VF_Full_Report_{target_corp}.docx")
         except Exception as e:
             st.error(f"오류 발생: {str(e)}")
 
