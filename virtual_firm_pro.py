@@ -12,20 +12,24 @@ from docx.oxml import OxmlElement
 from docx.text.paragraph import Paragraph
 
 # [설정 - API]
-MY_API_KEY = st.secrets["GEMINI_API_KEY"].strip() 
-client = genai.Client(api_key=MY_API_KEY)
+# st.secrets 사용 시 키 이름이 정확한지 확인하세요.
+try:
+    MY_API_KEY = st.secrets["GEMINI_API_KEY"].strip()
+    client = genai.Client(api_key=MY_API_KEY)
+except Exception as e:
+    st.error("API 키를 로드할 수 없습니다. Secrets 설정을 확인해주세요.")
 
 # 고정 템플릿 파일명 설정
 DEFAULT_WORD_TEMPLATE = "default_vf_template.docx"
 
-# 1. 폰트 설정 함수 (한글/영문 글꼴 지정)
+# 1. 폰트 설정 함수
 def set_font(run, font_name, size, bold=False):
     run.font.name = font_name
     run._element.rPr.rFonts.set(qn('w:eastAsia'), font_name)
     run.font.size = Pt(size)
     run.bold = bold
 
-# 2. 파일 텍스트 추출 (PDF 및 Word 지원)
+# 2. 파일 텍스트 추출 (호환성 및 추출 확인 기능 강화)
 def extract_text_from_file(uploaded_file):
     if uploaded_file is None: return ""
     file_name = uploaded_file.name.lower()
@@ -33,34 +37,30 @@ def extract_text_from_file(uploaded_file):
     try:
         if file_name.endswith('.pdf'):
             doc = fitz.open(stream=uploaded_file.read(), filetype="pdf")
-            return "".join([page.get_text() for page in doc])[:15000]
+            text = "".join([page.get_text() for page in doc])
+            return text[:15000] # 토큰 한계 고려
         elif file_name.endswith('.docx'):
             doc = Document(uploaded_file)
             return "\n".join([p.text for p in doc.paragraphs])[:15000]
-    except Exception:
+    except Exception as e:
+        st.error(f"파일 추출 오류: {str(e)}")
         return ""
     return ""
 
-# 3. 레이아웃 밀림 및 여백 보존형 삽입 함수 (여백 실종 방지 핵심)
+# 3. 레이아웃 보존형 삽입 함수 (수정 없음 - 유지)
 def add_styled_content_at(target_p, text):
-    # 빈 줄 제거 및 텍스트 정제
     lines = [line.strip() for line in str(text).split('\n') if line.strip()]
     if not lines: return target_p
-
-    # 템플릿 단락의 원본 여백 및 스타일 정보 보관
     orig_format = target_p.paragraph_format
     left_indent = orig_format.left_indent
     right_indent = orig_format.right_indent
     alignment = target_p.alignment
-
     current_p = target_p
     for i, line in enumerate(lines):
         if i == 0:
-            # 템플릿 태그({{tag}})가 있던 줄을 재활용하여 빈 줄 생성 방지
             current_p.text = "" 
             p_to_style = current_p
         else:
-            # 새 단락 생성 시 원본 단락의 여백 정보를 그대로 복제 (좌우 여백 유지)
             new_p_xml = OxmlElement('w:p')
             current_p._p.addnext(new_p_xml)
             p_to_style = Paragraph(new_p_xml, current_p._parent)
@@ -68,8 +68,6 @@ def add_styled_content_at(target_p, text):
             p_to_style.paragraph_format.right_indent = right_indent
             p_to_style.alignment = alignment
             current_p = p_to_style
-            
-        # 스타일 적용 (소제목 ## 및 볼드체 ** 대응)
         if line.startswith('## '):
             run = p_to_style.add_run(line.replace('## ', ''))
             set_font(run, "KoPub돋움체_Pro Medium", 12, bold=True)
@@ -86,26 +84,20 @@ def add_styled_content_at(target_p, text):
                     set_font(run, "KoPub돋움체_Pro Light", 11)
     return current_p
 
-# 4. 템플릿 치환 함수 (표 내부 [[태그]] 및 본문 {{태그}} 대응)
+# 4. 템플릿 치환 함수 (수정 없음 - 유지)
 def replace_placeholder(doc, placeholder, content, is_inline=False, font_name=None, font_size=None, is_bold=False):
     def process_p(p):
         if placeholder in p.text:
             if is_inline:
-                # 제목용: [[tech_title]]
                 p.text = p.text.replace(placeholder, str(content))
                 for run in p.runs:
                     set_font(run, font_name, font_size, bold=is_bold)
             else:
-                # 본문용: {{section_x}}
                 add_styled_content_at(p, content)
             return True
         return False
-
-    # 1. 일반 단락 검색
     for p in doc.paragraphs:
         if process_p(p): return True
-            
-    # 2. 표 내부 검색 (제목이 표 안에 있음)
     for table in doc.tables:
         for row in table.rows:
             for cell in row.cells:
@@ -113,7 +105,7 @@ def replace_placeholder(doc, placeholder, content, is_inline=False, font_name=No
                     if process_p(p): return True
     return False
 
-# 5. 메인 실행 함수
+# 5. 메인 실행 함수 (모델명 및 프롬프트 대폭 강화)
 def run_virtual_firm(spec_file, doc_template, target_corp, ir_data, business_status):
     if not spec_file:
         st.error("분석을 위한 기술 명세서 파일이 필요합니다.")
@@ -121,19 +113,39 @@ def run_virtual_firm(spec_file, doc_template, target_corp, ir_data, business_sta
 
     st.subheader(f"🏢 {target_corp if target_corp else 'Virtual Firm'} 심층 보고서 생성")
     
-    with st.spinner("🚀 3C, SWOT, 가치평가를 포함한 심층 분석 중..."):
-        try:
-            tech_text = extract_text_from_file(spec_file)
-            ir_text = extract_text_from_file(ir_data) if ir_data else ""
-            context = f"기업: {target_corp}\nIR: {ir_text}\n상태: {business_status}"
-            
-            # [프롬프트 고정] 3C, SWOT, 가치평가 수식 포함 지시
-            prompt = f"""당신은 가치평가 전문가입니다. <tech_title>, <section_1>, <section_2>, <section_3>, <section_4> 태그로 작성하세요.
-            - <section_3>: 로드맵, 예상매출액, 수익접근법 기술가치평가 산출 수식 상세 기술 [cite: 586, 618, 629]
-            - <section_4>: 3C 분석, SWOT 분석, Lean Canvas, 최종 제안 포함 [cite: 637, 670, 695, 707]
-            데이터: {context}\n명세서: {tech_text}"""
+    # 명세서 텍스트 미리 추출 및 확인
+    tech_text = extract_text_from_file(spec_file)
+    if len(tech_text.strip()) < 100:
+        st.error("파일에서 텍스트를 충분히 읽어오지 못했습니다. 스캔된 이미지 PDF인지 확인해주세요.")
+        return
 
-            response = client.models.generate_content(model="gemini-2.5-flash-lite", contents=prompt)
+    with st.spinner("🚀 재무 계획 및 심층 로드맵 분석 중..."):
+        try:
+            ir_text = extract_text_from_file(ir_data) if ir_data else ""
+            context = f"타겟 기업: {target_corp if target_corp else '미정'}\n사업 현황: {business_status}"
+            
+            # 💡 환각 방지 및 재무 근거 강화를 위한 프롬프트 최적화
+            prompt = f"""당신은 최고급 기술가치평가 전문가입니다. 
+            반드시 아래 제공된 [특허 명세서]의 실제 기술 내용만을 바탕으로 분석을 수행하세요. 절대 다른 기술을 지어내지 마세요.
+
+            [특허 명세서]
+            {tech_text}
+
+            [작성 지침]
+            - 응답은 반드시 <tech_title>, <section_1>, <section_2>, <section_3>, <section_4> 태그 형식을 유지하세요.
+            - <section_3>: 사업화 로드맵과 5개년 예상 매출액을 제시하고, '수익접근법'에 기반한 기술가치 산출 수식(할인율, 기술기여도 등)과 그 근거를 구체적 수치로 상세히 기술하세요.
+            - <section_4>: 3C 분석, SWOT 분석을 텍스트 기반 개조식으로 작성하고, 최종적으로 '기술이전'과 '직접 창업' 중 최적안을 선택하여 그 이유를 논리적으로 제안하세요.
+
+            [기타 정보]
+            {context}
+            기업 IR 참고: {ir_text}"""
+
+            # 💡 [핵심 수정] 모델명 형식을 소문자 표준 규격으로 변경
+            # 만약 2.5 Flash Lite가 지속적으로 400 에러를 낸다면 "gemini-1.5-flash"로 교체해 보세요.
+            response = client.models.generate_content(
+                model="models/gemini-2.5-flash-lite", 
+                contents=prompt
+            )
             raw_response = response.text.strip()
 
             def extract_tag(text, tag_name):
@@ -143,24 +155,31 @@ def run_virtual_firm(spec_file, doc_template, target_corp, ir_data, business_sta
 
             ai_data = {t: extract_tag(raw_response, t) for t in ["tech_title", "section_1", "section_2", "section_3", "section_4"]}
             
-            doc = Document(doc_template if doc_template else DEFAULT_WORD_TEMPLATE)
+            # 템플릿 로드 실패 방지
+            template_path = doc_template if doc_template else DEFAULT_WORD_TEMPLATE
+            if not os.path.exists(template_path):
+                # 템플릿이 없을 경우 새 문서 생성 (에러 방지용)
+                doc = Document()
+                doc.add_paragraph("[[tech_title]]")
+                for i in range(1, 5): doc.add_paragraph(f"{{{{section_{i}}}}}")
+            else:
+                doc = Document(template_path)
 
-            # 1. 제목 치환 (표 내부 [[tech_title]] 대응, 18pt Bold 강제) 
+            # 데이터 치환
             replace_placeholder(doc, "[[tech_title]]", ai_data['tech_title'], is_inline=True, 
                                 font_name="KoPub돋움체_Pro Bold", font_size=18, is_bold=True)
             
-            # 2. 섹션 치환 (여백 유지 및 문법 오류 방지) [cite: 378, 382, 385, 388]
             for i in range(1, 5):
                 tag_str = "{{" + f"section_{i}" + "}}"
                 replace_placeholder(doc, tag_str, ai_data[f'section_{i}'])
 
             doc_io = io.BytesIO()
             doc.save(doc_io)
-            st.success("✅ 고퀄리티 보고서 생성이 완료되었습니다!")
+            st.success("✅ 심층 보고서 생성이 완료되었습니다!")
             st.download_button(label="📥 보고서 다운로드", data=doc_io.getvalue(), 
-                               file_name="Virtual_Firm_Master_Report.docx")
+                               file_name=f"Virtual_Firm_Report_{target_corp}.docx")
         except Exception as e:
-            st.error(f"오류 발생: {str(e)}")
+            st.error(f"보고서 생성 중 오류 발생: {str(e)}")
 
 
 
