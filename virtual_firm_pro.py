@@ -7,29 +7,29 @@ import os
 import time
 from docx import Document
 from docx.shared import Pt
+from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml.ns import qn
 from docx.oxml import OxmlElement
 from docx.text.paragraph import Paragraph
 
 # [설정 - API]
-# st.secrets 사용 시 키 이름이 정확한지 확인하세요.
 try:
     MY_API_KEY = st.secrets["GEMINI_API_KEY"].strip()
     client = genai.Client(api_key=MY_API_KEY)
 except Exception as e:
-    st.error("API 키를 로드할 수 없습니다. Secrets 설정을 확인해주세요.")
+    st.error("API 키 로드 실패. Secrets 설정을 확인하세요.")
 
 # 고정 템플릿 파일명 설정
 DEFAULT_WORD_TEMPLATE = "default_vf_template.docx"
 
-# 1. 폰트 설정 함수
+# 1. 폰트 설정
 def set_font(run, font_name, size, bold=False):
     run.font.name = font_name
     run._element.rPr.rFonts.set(qn('w:eastAsia'), font_name)
     run.font.size = Pt(size)
     run.bold = bold
 
-# 2. 파일 텍스트 추출 (호환성 및 추출 확인 기능 강화)
+# 2. 파일 텍스트 추출 (PDF/Docx)
 def extract_text_from_file(uploaded_file):
     if uploaded_file is None: return ""
     file_name = uploaded_file.name.lower()
@@ -37,17 +37,14 @@ def extract_text_from_file(uploaded_file):
     try:
         if file_name.endswith('.pdf'):
             doc = fitz.open(stream=uploaded_file.read(), filetype="pdf")
-            text = "".join([page.get_text() for page in doc])
-            return text[:15000] # 토큰 한계 고려
+            return "".join([page.get_text() for page in doc])[:15000]
         elif file_name.endswith('.docx'):
             doc = Document(uploaded_file)
             return "\n".join([p.text for p in doc.paragraphs])[:15000]
-    except Exception as e:
-        st.error(f"파일 추출 오류: {str(e)}")
-        return ""
+    except Exception: return ""
     return ""
 
-# 3. 레이아웃 보존형 삽입 함수 (수정 없음 - 유지)
+# 3. 레이아웃 보존형 삽입 (줄바꿈 및 스타일 적용)
 def add_styled_content_at(target_p, text):
     lines = [line.strip() for line in str(text).split('\n') if line.strip()]
     if not lines: return target_p
@@ -84,16 +81,14 @@ def add_styled_content_at(target_p, text):
                     set_font(run, "KoPub돋움체_Pro Light", 11)
     return current_p
 
-# 4. 템플릿 치환 함수 (수정 없음 - 유지)
+# 4. 템플릿 치환
 def replace_placeholder(doc, placeholder, content, is_inline=False, font_name=None, font_size=None, is_bold=False):
     def process_p(p):
         if placeholder in p.text:
             if is_inline:
                 p.text = p.text.replace(placeholder, str(content))
-                for run in p.runs:
-                    set_font(run, font_name, font_size, bold=is_bold)
-            else:
-                add_styled_content_at(p, content)
+                for run in p.runs: set_font(run, font_name, font_size, bold=is_bold)
+            else: add_styled_content_at(p, content)
             return True
         return False
     for p in doc.paragraphs:
@@ -105,43 +100,42 @@ def replace_placeholder(doc, placeholder, content, is_inline=False, font_name=No
                     if process_p(p): return True
     return False
 
-# 5. 메인 실행 함수 (모델명 및 프롬프트 대폭 강화)
+# 5. 메인 실행 함수
 def run_virtual_firm(spec_file, doc_template, target_corp, ir_data, business_status):
     if not spec_file:
-        st.error("분석을 위한 기술 명세서 파일이 필요합니다.")
+        st.error("특허 명세서 파일이 필요합니다.")
         return
 
     st.subheader(f"🏢 {target_corp if target_corp else 'Virtual Firm'} 심층 보고서 생성")
-    
-    # 명세서 텍스트 미리 추출 및 확인
     tech_text = extract_text_from_file(spec_file)
-    if len(tech_text.strip()) < 100:
-        st.error("파일에서 텍스트를 충분히 읽어오지 못했습니다. 스캔된 이미지 PDF인지 확인해주세요.")
+    if len(tech_text.strip()) < 50:
+        st.error("❌ 파일에서 텍스트를 읽을 수 없습니다. (스캔본 여부 확인)")
         return
 
-    with st.spinner("🚀 재무 계획 및 심층 로드맵 분석 중..."):
+    with st.spinner("🚀 고퀄리티 심층 분석 및 텍스트 나열형 보고서 작성 중..."):
         try:
             ir_text = extract_text_from_file(ir_data) if ir_data else ""
-            context = f"타겟 기업: {target_corp if target_corp else '미정'}\n사업 현황: {business_status}"
+            context = f"타겟 기업: {target_corp}\nIR 데이터: {ir_text}\n사업 현황: {business_status}"
             
-            # 💡 환각 방지 및 재무 근거 강화를 위한 프롬프트 최적화
-            prompt = f"""당신은 최고급 기술가치평가 전문가입니다. 
-            반드시 아래 제공된 [특허 명세서]의 실제 기술 내용만을 바탕으로 분석을 수행하세요. 절대 다른 기술을 지어내지 마세요.
+            # 💡 [프롬프트 고도화] 표 작성 금지 및 글로 나열 지시
+            prompt = f"""당신은 국내 최고의 기술사업화 전략가이자 가치평가 전문가입니다.
+            반드시 제공된 [특허 명세서]의 실제 공학적 내용을 바탕으로 '글로 나열'하는 방식의 심층 보고서를 작성하세요.
 
             [특허 명세서]
             {tech_text}
 
-            [작성 지침]
-            - 응답은 반드시 <tech_title>, <section_1>, <section_2>, <section_3>, <section_4> 태그 형식을 유지하세요.
-            - <section_3>: 사업화 로드맵과 5개년 예상 매출액을 제시하고, '수익접근법'에 기반한 기술가치 산출 수식(할인율, 기술기여도 등)과 그 근거를 구체적 수치로 상세히 기술하세요.
-            - <section_4>: 3C 분석, SWOT 분석을 텍스트 기반 개조식으로 작성하고, 최종적으로 '기술이전'과 '직접 창업' 중 최적안을 선택하여 그 이유를 논리적으로 제안하세요.
+            [작성 지침 - 절대 엄수]
+            1. 마크다운 표(|---| 등)를 절대 사용하지 마세요. 모든 정보는 소제목(##)과 개조식(Bullet points) 텍스트로만 나열하세요.
+            2. 응답은 반드시 <tech_title>, <section_1>, <section_2>, <section_3>, <section_4> 태그로 감싸세요.
+            3. 각 섹션은 최소 5~8개 이상의 상세 문단(또는 긴 개조식 목록)으로 매우 풍성하게 작성하세요.
+            
+            [섹션별 구성 가이드]
+            - <section_3>: 단계별 스케일업(Scale-up) 로드맵을 연도별로 상세히 글로 나열하고, 기술가치평가(수익접근법) 수식과 함께 해당 수치가 도출된 가정(단가, 판매량, 점유율 등)을 구체적 근거와 함께 서술하세요.
+            - <section_4>: 3C 및 SWOT 분석 내용을 개조식으로 상세 기술하고, 최종적으로 이 기술을 '기술이전'할지 '직접 창업'할지 명확히 선택하여 그 이유를 정량적/정성적 근거를 들어 논리적으로 제안하세요.
 
             [기타 정보]
-            {context}
-            기업 IR 참고: {ir_text}"""
+            {context}"""
 
-            # 💡 [핵심 수정] 모델명 형식을 소문자 표준 규격으로 변경
-            # 만약 2.5 Flash Lite가 지속적으로 400 에러를 낸다면 "gemini-1.5-flash"로 교체해 보세요.
             response = client.models.generate_content(
                 model="models/gemini-2.5-flash-lite", 
                 contents=prompt
@@ -154,32 +148,20 @@ def run_virtual_firm(spec_file, doc_template, target_corp, ir_data, business_sta
                 return match.group(1).strip() if match else ""
 
             ai_data = {t: extract_tag(raw_response, t) for t in ["tech_title", "section_1", "section_2", "section_3", "section_4"]}
-            
-            # 템플릿 로드 실패 방지
-            template_path = doc_template if doc_template else DEFAULT_WORD_TEMPLATE
-            if not os.path.exists(template_path):
-                # 템플릿이 없을 경우 새 문서 생성 (에러 방지용)
-                doc = Document()
-                doc.add_paragraph("[[tech_title]]")
-                for i in range(1, 5): doc.add_paragraph(f"{{{{section_{i}}}}}")
-            else:
-                doc = Document(template_path)
+            doc = Document(doc_template if doc_template else DEFAULT_WORD_TEMPLATE)
 
-            # 데이터 치환
             replace_placeholder(doc, "[[tech_title]]", ai_data['tech_title'], is_inline=True, 
                                 font_name="KoPub돋움체_Pro Bold", font_size=18, is_bold=True)
-            
             for i in range(1, 5):
-                tag_str = "{{" + f"section_{i}" + "}}"
-                replace_placeholder(doc, tag_str, ai_data[f'section_{i}'])
+                replace_placeholder(doc, "{{" + f"section_{i}" + "}}", ai_data[f'section_{i}'])
 
             doc_io = io.BytesIO()
             doc.save(doc_io)
-            st.success("✅ 심층 보고서 생성이 완료되었습니다!")
-            st.download_button(label="📥 보고서 다운로드", data=doc_io.getvalue(), 
-                               file_name=f"Virtual_Firm_Report_{target_corp}.docx")
+            st.success("✅ 심층 보고서 작성이 완료되었습니다!")
+            st.download_button(label="📥 심층 보고서 다운로드", data=doc_io.getvalue(), 
+                               file_name=f"VF_Strategic_Report_{target_corp}.docx")
         except Exception as e:
-            st.error(f"보고서 생성 중 오류 발생: {str(e)}")
+            st.error(f"오류 발생: {str(e)}")
 
 
 
