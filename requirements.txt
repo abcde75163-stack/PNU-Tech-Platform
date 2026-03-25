@@ -1,10 +1,11 @@
 streamlit
 pypdf
-PyMuPDF
-google-genai
-python-docx
-python-pptx
 openai
+python-pptx
+Pillow
+PyMuPDF
 requests
-pillow
 numpy
+python-docx
+google-genai
+matplotlib
