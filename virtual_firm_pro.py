@@ -39,17 +39,17 @@ def extract_text_from_file(uploaded_file):
     return ""
 
 # 💡 [핵심] 텍스트와 표를 구분하여 삽입하는 지능형 함수
-def add_smart_content(doc, text):
-    # 표 데이터 추출을 위한 정규식
-    table_pattern = r'\[TABLE_START\](.*?)\[TABLE_END\]'
-    segments = re.split(table_pattern, text, flags=re.DOTALL)
+defdef add_smart_content(doc, text):
+    # 대소문자 구분 없이, 그리고 공백이 섞여도 잘 찾도록 정규식 보강
+    table_pattern = r'\[\s*TABLE_START\s*\](.*?)\[\s*TABLE_END\s*\]'
+    segments = re.split(table_pattern, text, flags=re.DOTALL | re.IGNORECASE)
     
     for i, seg in enumerate(segments):
         seg = seg.strip()
         if not seg: continue
         
-        # 짝수 번째 인덱스는 일반 텍스트, 홀수 번째는 표 데이터
         if i % 2 == 0:
+            # 일반 텍스트 처리 로직 (기존과 동일)
             lines = seg.split('\n')
             for line in lines:
                 line_stripped = line.strip()
@@ -72,11 +72,10 @@ def add_smart_content(doc, text):
                             run = p.add_run(part)
                             set_font(run, "KoPub돋움체_Pro Light", 11)
         else:
-            # 📊 워드 정식 표 생성 로직
+            # 표 생성 로직 보강
             rows_data = [line.strip() for line in seg.split('\n') if '|' in line]
-            if not rows_data: continue
+            if len(rows_data) < 1: continue
             
-            # 데이터 파싱
             grid = []
             for r in rows_data:
                 cells = [c.strip() for c in r.split('|') if c.strip()]
@@ -84,14 +83,16 @@ def add_smart_content(doc, text):
             
             if not grid: continue
             
-            # 워드 표 삽입
-            table = doc.add_table(rows=len(grid), cols=len(grid[0]))
-            table.style = 'Table Grid' # 기본 격자 스타일
+            # 열 개수가 불일치할 경우를 대비한 안전장치
+            max_cols = max(len(row) for row in grid)
+            table = doc.add_table(rows=len(grid), cols=max_cols)
+            table.style = 'Table Grid'
             
             for r_idx, row_content in enumerate(grid):
                 for c_idx, cell_value in enumerate(row_content):
-                    cell = table.cell(r_idx, c_idx)
-                    cell.text = cell_value
+                    if c_idx < max_cols:
+                        cell = table.cell(r_idx, c_idx)
+                        cell.text = cell_value
                     # 표 내부 폰트 설정
                     for para in cell.paragraphs:
                         para.alignment = WD_ALIGN_PARAGRAPH.CENTER
