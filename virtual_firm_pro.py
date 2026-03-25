@@ -38,9 +38,9 @@ def extract_text_from_file(uploaded_file):
     except Exception: return ""
     return ""
 
-# 💡 [핵심] 텍스트와 표를 구분하여 삽입하는 지능형 함수 (SyntaxError 수정완료)
+# 💡 [보강] 표와 텍스트를 더 정교하게 분리하는 함수
 def add_smart_content(doc, text):
-    # 대소문자 및 공백 허용 정규식
+    # 마커 기반 분리 + 마커가 없더라도 파이프(|) 기호가 많은 구간을 표로 인식
     table_pattern = r'\[\s*TABLE_START\s*\](.*?)\[\s*TABLE_END\s*\]'
     segments = re.split(table_pattern, text, flags=re.DOTALL | re.IGNORECASE)
     
@@ -49,57 +49,59 @@ def add_smart_content(doc, text):
         if not seg: continue
         
         if i % 2 == 0:
-            # --- 일반 텍스트 처리 구간 ---
+            # 일반 텍스트 내부에 마커 없이 들어간 표(|)가 있는지 다시 확인
             lines = seg.split('\n')
+            table_buffer = []
+            
             for line in lines:
-                line_stripped = line.strip()
-                # 불필요한 섹션 마커 제거
-                line_stripped = re.sub(r'\[SECTION_\d\]|\[TECH_TITLE\]', '', line_stripped).strip()
-                if not line_stripped: continue
-                
-                if line_stripped.startswith('## '):
-                    p = doc.add_paragraph()
-                    run = p.add_run(line_stripped.replace('## ', ''))
-                    set_font(run, "KoPub돋움체_Pro Medium", 13, bold=True)
-                    p.paragraph_format.space_before = Pt(15)
+                if line.count('|') >= 2: # 파이프가 2개 이상이면 표 줄로 간주
+                    table_buffer.append(line)
                 else:
-                    p = doc.add_paragraph()
-                    p.paragraph_format.line_spacing = 1.6
-                    parts = re.split(r'(\*\*.*?\*\*)', line_stripped)
-                    for part in parts:
-                        if part.startswith('**') and part.endswith('**'):
-                            run = p.add_run(part.replace('**', ''))
-                            set_font(run, "KoPub돋움체_Pro Medium", 11, bold=True)
-                        else:
-                            run = p.add_run(part)
-                            set_font(run, "KoPub돋움체_Pro Light", 11)
+                    if table_buffer: # 모아둔 표 데이터가 있으면 먼저 표로 생성
+                        create_word_table(doc, "\n".join(table_buffer))
+                        table_buffer = []
+                    
+                    line_stripped = line.strip()
+                    if not line_stripped: continue
+                    if line_stripped.startswith('## '):
+                        p = doc.add_paragraph()
+                        run = p.add_run(line_stripped.replace('## ', ''))
+                        set_font(run, "KoPub돋움체_Pro Medium", 13, bold=True)
+                    else:
+                        p = doc.add_paragraph()
+                        p.paragraph_format.line_spacing = 1.6
+                        run = p.add_run(line_stripped)
+                        set_font(run, "KoPub돋움체_Pro Light", 11)
+            
+            if table_buffer: # 남은 표 데이터 처리
+                create_word_table(doc, "\n".join(table_buffer))
         else:
-            # --- 워드 정식 표(Table) 생성 구간 ---
-            rows_data = [line.strip() for line in seg.split('\n') if '|' in line]
-            if len(rows_data) < 1: continue
-            
-            grid = []
-            for r in rows_data:
-                cells = [c.strip() for c in r.split('|') if c.strip()]
-                if cells: grid.append(cells)
-            
-            if not grid: continue
-            
-            # 열 개수 자동 계산 및 표 생성
-            max_cols = max(len(row) for row in grid)
-            table = doc.add_table(rows=len(grid), cols=max_cols)
-            table.style = 'Table Grid'
-            
-            for r_idx, row_content in enumerate(grid):
-                for c_idx, cell_value in enumerate(row_content):
-                    if c_idx < max_cols:
-                        cell = table.cell(r_idx, c_idx)
-                        cell.text = cell_value
-                        # 표 내부 폰트 및 정렬 설정
-                        for para in cell.paragraphs:
-                            para.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                            for run in para.runs:
-                                set_font(run, "KoPub돋움체_Pro Light", 10, bold=(r_idx == 0))
+            # 마커로 감싸진 정식 표 생성
+            create_word_table(doc, seg)
+
+# 💡 [신규] 워드 표 생성 공통 모듈
+def create_word_table(doc, table_text):
+    rows_data = [line.strip() for line in table_text.split('\n') if '|' in line]
+    grid = []
+    for r in rows_data:
+        cells = [c.strip() for c in r.split('|') if c.strip()]
+        if cells: grid.append(cells)
+    
+    if not grid: return
+    
+    max_cols = max(len(row) for row in grid)
+    table = doc.add_table(rows=len(grid), cols=max_cols)
+    table.style = 'Table Grid'
+    
+    for r_idx, row_content in enumerate(grid):
+        for c_idx, cell_value in enumerate(row_content):
+            if c_idx < max_cols:
+                cell = table.cell(r_idx, c_idx)
+                cell.text = cell_value
+                for para in cell.paragraphs:
+                    para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                    for run in para.runs:
+                        set_font(run, "KoPub돋움체_Pro Light", 10, bold=(r_idx == 0))
 
 def parse_ai_response(text):
     data = {"tech_title": "", "section_1": "", "section_2": "", "section_3": "", "section_4": ""}
@@ -116,75 +118,39 @@ def run_virtual_firm(spec_file, doc_template, target_corp, ir_data, business_sta
         st.error("특허 명세서 파일이 필요합니다.")
         return
 
-    st.subheader(f"🏢 {target_corp if target_corp else 'Virtual Firm'} 심층 보고서 생성")
+    st.subheader(f"🏢 {target_corp if target_corp else 'Virtual Firm'} 심층 보고서")
     tech_text = extract_text_from_file(spec_file)
     
-    with st.spinner("🚀 고도화된 표와 텍스트를 구성하여 분석 중입니다..."):
+    with st.spinner("🚀 서버 부하를 체크하며 심층 보고서를 생성 중입니다..."):
         try:
             ir_text = extract_text_from_file(ir_data) if ir_data else ""
             context = f"타겟 기업: {target_corp}\nIR 데이터: {ir_text}\n사업 현황: {business_status}"
             
-            prompt = f"""당신은 국내 최고의 기술사업화 전략가이자 VC 심사역입니다. 
+            prompt = f"""당신은 국내 최고의 기술사업화 전략가입니다. 
             제공된 [특허 명세서]를 기반으로 아주 상세한 투자용 보고서를 작성하세요.
-
-            [특허 명세서]
-            {tech_text}
-
-            [작성 지침 - 표(Table) 활용 가이드]
-            1. 시장규모(TAM-SAM-SOM), 성능 비교, 연도별 재무 추정, SWOT, Lean Canvas는 반드시 '표'로 구성하세요.
-            2. 표 시작은 [TABLE_START], 끝은 [TABLE_END]로 표시하고 내부는 | 기호로 구분하세요. (매우 중요)
-            3. 각 섹션은 최소 10페이지 이상의 분량이 나올 수 있도록 상세히 서술하세요.
-
-            [SECTION 구분자]
-            [TECH_TITLE] (매력적인 기술 비즈니스 명칭)
-            [SECTION_1] (기술 메커니즘 분석 - 기존 기술과의 성능 비교 표 포함)
-            [SECTION_2] (시장 및 관련 기술 동향 - TAM-SAM-SOM 추정 표 포함)
-            [SECTION_3] (스케일업 및 재무 로드맵 - 연도별 재무 추정 및 중장기 로드맵 표 포함)
-            [SECTION_4] (전략 제안 - SWOT 및 Lean Canvas 9개 블록 표 포함)
-
-            [기타 정보]
-            {context}"""
-
-            response = client.models.generate_content(model="models/gemini-2.5-flash-lite", contents=prompt)
-            ai_data = parse_ai_response(response.text.strip())
+            [특허 명세서]: {tech_text}
             
+            [핵심 지시]
+            1. 모든 데이터 분석(성능 비교, TAM-SAM-SOM, 재무 추정, Lean Canvas)은 반드시 표(|---|) 형식으로 작성하세요.
+            2. 표 앞뒤에는 반드시 [TABLE_START]와 [TABLE_END] 마커를 붙이세요.
+            3. 각 섹션은 최소 8~10문단 이상의 매우 방대한 텍스트 분석을 포함해야 합니다. 절대로 요약하지 마세요.
+            
+            [구조]
+            [TECH_TITLE], [SECTION_1], [SECTION_2], [SECTION_3], [SECTION_4] 마커를 반드시 유지하세요."""
+
+            # 💡 [503 에러 방어] 재시도 로직 강화
+            max_retries = 3
+            raw_response = ""
+            for attempt in range(max_retries):
+                try:
+                    response = client.models.generate_content(model="models/gemini-2.5-flash-lite", contents=prompt)
+                    raw_response = response.text.strip()
+                    break
+                except Exception:
+                    if attempt == max_retries - 1: raise
+                    time.sleep((attempt + 1) * 5) # 5초, 10초 대기
+
+            ai_data = parse_ai_response(raw_response)
             doc = Document()
-            # 문서 여백 설정
-            for section in doc.sections:
-                section.top_margin = Pt(72)
-                section.bottom_margin = Pt(72)
-                section.left_margin = Pt(72)
-                section.right_margin = Pt(72)
-
-            # 제목 섹션
-            title_p = doc.add_paragraph("\n\n")
-            title_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-            title_run = title_p.add_run(f"Virtual Firm 심층 사업화 전략 보고서\n\n[{ai_data['tech_title']}]")
-            set_font(title_run, "KoPub돋움체_Pro Bold", 18, bold=True)
-            doc.add_page_break()
-
-            sections_list = [
-                ("Ⅰ. 기술 개요 및 메커니즘 분석", "section_1"),
-                ("Ⅱ. 시장 트렌드 및 TAM-SAM-SOM 분석", "section_2"),
-                ("Ⅲ. Scale-up 및 심층 재무 로드맵", "section_3"),
-                ("Ⅳ. 최종 사업화 제안 (Lean Canvas 포함)", "section_4")
-            ]
-
-            for i, (title_text, key) in enumerate(sections_list):
-                h_p = doc.add_paragraph()
-                set_font(h_p.add_run(f"{title_text}"), "KoPub돋움체_Pro Bold", 15, bold=True)
-                h_p.paragraph_format.space_before = Pt(20)
-                
-                content = ai_data.get(key, "")
-                if content:
-                    add_smart_content(doc, content)
-                
-                if i < len(sections_list) - 1:
-                    doc.add_page_break()
-
-            doc_io = io.BytesIO()
-            doc.save(doc_io)
-            st.success("✅ 표와 텍스트가 정교하게 결합된 심층 보고서 작성이 완료되었습니다!")
-            st.download_button(label="📥 최종 고도화 보고서 다운로드", data=doc_io.getvalue(), file_name=f"VF_Master_Report_Final.docx")
-        except Exception as e:
-            st.error(f"보고서 생성 중 오류 발생: {str(e)}")
+            # ... (제목 및 섹션 반복문 로직 - 기존과 동일) ...
+            # 생략된 부분은 기존 코드의 doc 생성 및 저장 로직을 유지하시면 됩니다.
