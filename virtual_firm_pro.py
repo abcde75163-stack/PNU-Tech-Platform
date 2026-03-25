@@ -181,6 +181,3 @@ def run_virtual_firm(spec_file, doc_template, target_corp, ir_data, business_sta
             st.download_button(label="📥 최종 보고서 다운로드", data=doc_io.getvalue(), file_name=f"VF_Master_Report_{target_corp}.docx")
         except Exception as e:
             st.error(f"오류 발생: {str(e)}")
-
-
-
