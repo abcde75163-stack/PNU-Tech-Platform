@@ -43,7 +43,7 @@ ALLOWED_CLASSES = [
 ]
 
 TEXT_MODEL_FIXED = "gpt-4o-mini" 
-IMAGE_MODEL_FIXED = "dall-e-3"    
+IMAGE_MODEL_FIXED = "gpt-image-1-mini"    
 
 ICON_SIZE = "1024x1024"
 DOWNSCALE_ICON_TO = 512
